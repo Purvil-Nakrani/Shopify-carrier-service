@@ -1,0 +1,95 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model RateRequest {
+  id                     Int             @id @default(autoincrement())
+  requestId              String          @unique @map("request_id") @db.VarChar(255)
+  originPostalCode       String          @map("origin_postal_code") @db.VarChar(20)
+  destinationPostalCode  String          @map("destination_postal_code") @db.VarChar(20)
+  destinationCountry     String          @map("destination_country") @db.VarChar(5)
+  destinationProvince    String          @map("destination_province") @db.VarChar(50)
+  destinationCity        String          @map("destination_city") @db.VarChar(100)
+  totalWeight            Decimal         @map("total_weight") @db.Decimal(10, 2)
+  totalPrice             Decimal         @map("total_price") @db.Decimal(10, 2)
+  items                  Json
+  createdAt              DateTime        @default(now()) @map("created_at")
+  wwexResponses          WWEXResponse[]
+
+  @@index([originPostalCode, destinationPostalCode], map: "idx_postal_codes")
+  @@index([createdAt], map: "idx_created_at")
+  @@map("rate_requests")
+}
+
+model WWEXResponse {
+  id              Int          @id @default(autoincrement())
+  requestId       String       @map("request_id") @db.VarChar(255)
+  wwexQuoteId     String?      @map("wwex_quote_id") @db.VarChar(255)
+  shippingRate    Decimal?     @map("shipping_rate") @db.Decimal(10, 2)
+  transitDays     Int?         @map("transit_days")
+  serviceLevel    String?      @map("service_level") @db.VarChar(100)
+  responseTimeMs  Int          @map("response_time_ms")
+  errorMessage    String?      @map("error_message") @db.Text
+  rawResponse     Json         @map("raw_response")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  rateRequest     RateRequest  @relation(fields: [requestId], references: [requestId])
+
+  @@index([requestId], map: "idx_request_id")
+  @@index([createdAt], map: "idx_created_at")
+  @@map("wwex_responses")
+}
+
+model RateCache {
+  id                    Int      @id @default(autoincrement())
+  cacheKey              String   @unique @map("cache_key") @db.VarChar(255)
+  originPostalCode      String   @map("origin_postal_code") @db.VarChar(20)
+  destinationPostalCode String   @map("destination_postal_code") @db.VarChar(20)
+  weightRangeMin        Decimal  @map("weight_range_min") @db.Decimal(10, 2)
+  weightRangeMax        Decimal  @map("weight_range_max") @db.Decimal(10, 2)
+  shippingRate          Decimal  @map("shipping_rate") @db.Decimal(10, 2)
+  transitDays           Int      @map("transit_days")
+  expiresAt             DateTime @map("expires_at")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  @@index([cacheKey], map: "idx_cache_key")
+  @@index([expiresAt], map: "idx_expires_at")
+  @@map("rate_cache")
+}
+
+model ProductFreightData {
+  id                Int      @id @default(autoincrement())
+  shopifyProductId  BigInt   @unique @map("shopify_product_id")
+  shopifyVariantId  BigInt?  @map("shopify_variant_id")
+  weightLbs         Decimal? @map("weight_lbs") @db.Decimal(10, 2)
+  lengthIn          Decimal? @map("length_in") @db.Decimal(10, 2)
+  widthIn           Decimal? @map("width_in") @db.Decimal(10, 2)
+  heightIn          Decimal? @map("height_in") @db.Decimal(10, 2)
+  freightClass      String?  @map("freight_class") @db.VarChar(10)
+  isFreightItem     Boolean  @default(false) @map("is_freight_item")
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@index([shopifyProductId], map: "idx_product_id")
+  @@index([shopifyVariantId], map: "idx_variant_id")
+  @@map("product_freight_data")
+}
+
+model ErrorLog {
+  id           Int      @id @default(autoincrement())
+  errorType    String?  @map("error_type") @db.VarChar(100)
+  errorMessage String?  @map("error_message") @db.Text
+  stackTrace   String?  @map("stack_trace") @db.Text
+  requestData  Json?    @map("request_data")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([errorType], map: "idx_error_type")
+  @@index([createdAt], map: "idx_created_at")
+  @@map("error_logs")
+}

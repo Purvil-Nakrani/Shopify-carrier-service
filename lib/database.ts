@@ -1,0 +1,120 @@
+import prisma from './prisma-client';
+
+// Log rate request to database
+export async function logRateRequest(data: {
+  requestId: string;
+  origin: string;
+  destination: any;
+  weight: number;
+  price: number;
+  items: any[];
+}) {
+  await prisma.rateRequest.create({
+    data: {
+      requestId: data.requestId,
+      originPostalCode: data.origin,
+      destinationPostalCode: data.destination.postal_code,
+      destinationCountry: data.destination.country,
+      destinationProvince: data.destination.province,
+      destinationCity: data.destination.city,
+      totalWeight: data.weight,
+      totalPrice: data.price,
+      items: data.items as any
+    }
+  });
+}
+
+// Log WWEX response
+export async function logWWEXResponse(data: {
+  requestId: string;
+  quoteId?: string;
+  rate?: number;
+  transitDays?: number;
+  serviceLevel?: string;
+  responseTimeMs: number;
+  error?: string;
+  rawResponse: any;
+}) {
+  await prisma.wWEXResponse.create({
+    data: {
+      requestId: data.requestId,
+      wwexQuoteId: data.quoteId || null,
+      shippingRate: data.rate || null,
+      transitDays: data.transitDays || null,
+      serviceLevel: data.serviceLevel || null,
+      responseTimeMs: data.responseTimeMs,
+      errorMessage: data.error || null,
+      rawResponse: data.rawResponse as any
+    }
+  });
+}
+
+// Check rate cache
+export async function getCachedRate(cacheKey: string) {
+  const cached = await prisma.rateCache.findFirst({
+    where: {
+      cacheKey: cacheKey,
+      expiresAt: {
+        gt: new Date()
+      }
+    }
+  });
+
+  if (!cached) return null;
+
+  return {
+    shipping_rate: cached.shippingRate.toNumber(),
+    transit_days: cached.transitDays
+  };
+}
+
+// Save rate to cache
+export async function cacheRate(data: {
+  cacheKey: string;
+  origin: string;
+  destination: string;
+  weightMin: number;
+  weightMax: number;
+  rate: number;
+  transitDays: number;
+  expiresInMinutes?: number;
+}) {
+  const expiresAt = new Date();
+  expiresAt.setMinutes(expiresAt.getMinutes() + (data.expiresInMinutes || 60));
+
+  await prisma.rateCache.upsert({
+    where: {
+      cacheKey: data.cacheKey
+    },
+    update: {
+      shippingRate: data.rate,
+      transitDays: data.transitDays,
+      expiresAt: expiresAt
+    },
+    create: {
+      cacheKey: data.cacheKey,
+      originPostalCode: data.origin,
+      destinationPostalCode: data.destination,
+      weightRangeMin: data.weightMin,
+      weightRangeMax: data.weightMax,
+      shippingRate: data.rate,
+      transitDays: data.transitDays,
+      expiresAt: expiresAt
+    }
+  });
+}
+
+// Log errors
+export async function logError(errorType: string, errorMessage: string, stackTrace?: string, requestData?: any) {
+  await prisma.errorLog.create({
+    data: {
+      errorType: errorType,
+      errorMessage: errorMessage,
+      stackTrace: stackTrace || null,
+      requestData: requestData ? (requestData as any) : null
+    }
+  });
+}
+
+export default { logRateRequest, logWWEXResponse, getCachedRate, cacheRate, logError };
+
