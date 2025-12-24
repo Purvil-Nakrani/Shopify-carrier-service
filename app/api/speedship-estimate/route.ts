@@ -84,8 +84,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = JSON.parse(rawBody);
-    // console.log("body===================",body)
-    console.log("🟢 body.rate.items===================", body.rate.items);
+    console.log("🟢 body===================", body);
     const requestId = `SPEEDSHIP-${Date.now()}-${Math.random()
       .toString(36)
       .substr(2, 9)}`;
@@ -276,45 +275,106 @@ export async function POST(request: NextRequest) {
 
       try {
         // Prepare Speedship API request
+        // const speedshipRequest = {
+        //   accountNumber: "12345678",
+        //   shipmentType: "LTL",
+        //   origin: {
+        //     postalCode: origin,
+        //     country: rate.origin?.country || "US",
+        //   },
+        //   destination: {
+        //     postalCode: destination.postal_code || "",
+        //     city: destination.city || "",
+        //     state: destination.province || "",
+        //     country: destination.country || "US",
+        //   },
+        //   items: freightItems.map((item: any) => {
+        //     // Ensure minimum weight of 1 lb to prevent Speedship API errors
+        //     const itemWeight = Math.max(item.weight, 1);
+            
+        //     // Log when using default weight
+        //     if (item.weight === 0) {
+        //       console.warn(`🔴 ⚠️ Product has no weight configured, using default minimum: ${itemWeight} lb`);
+        //     }
+            
+        //     return {
+        //       weight: itemWeight,
+        //       weightUnit: "LBS",
+        //       dimensions: {
+        //         length: item.length,
+        //         width: item.width,
+        //         height: item.height,
+        //         unit: "IN",
+        //       },
+        //       quantity: item.quantity,
+        //       freightClass: calculateFreightClass(
+        //         itemWeight,
+        //         calculateVolume(item)
+        //       ),
+        //     };
+        //   }),
+        // };
         const speedshipRequest = {
-          accountNumber: "12345678",
-          shipmentType: "LTL",
-          origin: {
-            postalCode: origin,
-            country: rate.origin?.country || "US",
-          },
-          destination: {
-            postalCode: destination.postal_code || "",
-            city: destination.city || "",
-            state: destination.province || "",
-            country: destination.country || "US",
-          },
-          items: freightItems.map((item: any) => {
-            // Ensure minimum weight of 1 lb to prevent Speedship API errors
-            const itemWeight = Math.max(item.weight, 1);
-            
-            // Log when using default weight
-            if (item.weight === 0) {
-              console.warn(`🔴 ⚠️ Product has no weight configured, using default minimum: ${itemWeight} lb`);
-            }
-            
-            return {
-              weight: itemWeight,
-              weightUnit: "LBS",
-              dimensions: {
-                length: item.length,
-                width: item.width,
-                height: item.height,
-                unit: "IN",
-              },
-              quantity: item.quantity,
-              freightClass: calculateFreightClass(
-                itemWeight,
-                calculateVolume(item)
-              ),
-            };
-          }),
-        };
+  accountNumber: "12345678",
+
+  shipment: {
+    mode: "LTL",
+
+    origin: {
+      city: rate.origin.city,
+      state: rate.origin.province,
+      postalCode: rate.origin.postal_code,
+      countryCode: rate.origin.country || "US",
+      residential: false
+    },
+
+    destination: {
+      city: destination.city,
+      state: destination.province,
+      postalCode: destination.postal_code,
+      countryCode: destination.country || "US",
+      residential: false
+    },
+
+    handlingUnits: freightItems.map((item: any) => {
+  const weight = Math.max(Number(item.weight) || 0, 100);
+
+  const length = Number(item.length) || 48;
+  const width  = Number(item.width)  || 40;
+  const height = Number(item.height) || 48;
+
+  const volume = calculateVolume({ length, width, height });
+
+  return {
+    type: "PALLET",
+    quantity: 1,
+
+    weight: {
+      value: weight,
+      unit: "LB"
+    },
+
+    dimensions: {
+
+      
+      length,
+      width,
+      height,
+      unit: "IN"
+    },
+
+    freightClass: calculateFreightClass(weight, volume)
+  };
+})
+
+  },
+
+  accessorials: {
+    liftgateDelivery: false,
+    notifyBeforeDelivery: false
+  }
+};
+
 
         console.log(
           "🟢 Request Payload=============",
@@ -402,11 +462,11 @@ export async function POST(request: NextRequest) {
             max_delivery_date: getDeliveryDate(transitDays + 2).toISOString(),
           });
         } else {
-          console.warn("🔴 ⚠️ Speedship API returned invalid rate (0 or undefined)");
+          console.warn("🔴 Speedship API returned invalid rate (0 or undefined)");
         }
       } catch (error: any) {
         const speedshipResponseTime = Date.now() - speedshipStartTime;
-        console.error("🔴Speedship API Error:", error.message);
+        console.error("🔴 Speedship API Error:", error.message);
         if (error.response) {
           console.error("🔴 Error Response:", error.response.data);
           console.error("🔴 Status:", error.response.status);
@@ -423,6 +483,7 @@ export async function POST(request: NextRequest) {
           (sum, item) => sum + item.totalWeight,
           0
         );
+        
         const baseRate = 150;
         const perLbRate = 0.5;
         const estimatedRate = baseRate + totalWeight * perLbRate;

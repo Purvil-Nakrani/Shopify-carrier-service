@@ -164,8 +164,8 @@ function generateHMAC(body) {
 
 // Make request
 async function testCarrierService() {
-  console.log('Testing Carrier Service...');
-  console.log('Target URL:', `${APP_URL}/api/carrier-service`);
+  console.log('🟢 Testing Carrier Service...');
+  console.log('🟢 Target URL:', `${APP_URL}/api/carrier-service`);
   
   const body = JSON.stringify(rateRequest);
   const hmac = generateHMAC(body);
@@ -192,10 +192,10 @@ async function testCarrierService() {
       });
 
       res.on('end', () => {
-        console.log('\n=== Response ===');
-        console.log('Status:', res.statusCode);
-        console.log('Headers:', res.headers);
-        console.log('\nBody:');
+        console.log('\n🟢 === Response ===');
+        console.log('🟢 Status:', res.statusCode);
+        console.log('🟢 Headers:', res.headers);
+        console.log('\n🟢 Body:');
         
         try {
           const parsed = JSON.parse(data);
@@ -217,7 +217,7 @@ async function testCarrierService() {
     });
 
     req.on('error', (error) => {
-      console.error('✗ ERROR:', error.message);
+      console.error('🔴 ✗ ERROR:', error.message);
       reject(error);
     });
 
@@ -227,7 +227,7 @@ async function testCarrierService() {
 }
 
 // Run test
-console.log('Shopify Carrier Service Test - Dynamic Shipping Logic\n');
+console.log('🟢 Shopify Carrier Service Test - Dynamic Shipping Logic\n');
 console.log('='.repeat(60));
 console.log('Testing MULTIPLE scenarios:\n');
 console.log('1. Roll Product (Per-item < 150 lbs):');
@@ -256,10 +256,10 @@ console.log('\n');
 
 testCarrierService()
   .then(() => {
-    console.log('\nTest completed');
+    console.log('\n🟢 Test completed');
     process.exit(0);
   })
   .catch((error) => {
-    console.error('Test failed:', error);
+    console.error('🔴 Test failed:', error);
     process.exit(1);
   });

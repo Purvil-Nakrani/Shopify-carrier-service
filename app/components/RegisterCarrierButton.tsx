@@ -4,7 +4,7 @@ import { useState } from 'react';
 
 export default function RegisterCarrierButton() {
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [message, setMessage] = useState<{ type: 'success' | 'error' | 'warning', text: string } | null>(null);
 
   const handleRegister = async () => {
     setLoading(true);
@@ -26,9 +26,44 @@ export default function RegisterCarrierButton() {
           text: '✓ Carrier service registered successfully! Your store can now use WWEX freight shipping.',
         });
       } else {
+        // Parse error message for better display
+        let errorMessage = 'Unknown error occurred';
+        let messageType: 'error' | 'warning' = 'error';
+
+        if (data.error) {
+          const errorStr = data.error.toString();
+          
+          // Check if it's a Shopify API error with details
+          if (data.details?.errors) {
+            const errors = data.details.errors;
+            
+            // Handle "already configured" case as a warning
+            if (errors.base && errors.base.includes('is already configured')) {
+              messageType = 'warning';
+              errorMessage = '⚠️ Carrier service is already registered!\n\nThe "WWEX Freight Shipping" service is already configured in your Shopify store. No action needed.';
+            } else {
+              // Format other Shopify errors nicely
+              const errorLines = [];
+              for (const [key, messages] of Object.entries(errors)) {
+                if (Array.isArray(messages)) {
+                  errorLines.push(`${key}: ${messages.join(', ')}`);
+                } else {
+                  errorLines.push(`${key}: ${messages}`);
+                }
+              }
+              errorMessage = `Shopify API Error:\n${errorLines.join('\n')}`;
+            }
+          } else {
+            // Generic error formatting
+            errorMessage = errorStr.replace(/Received an error response.*?from Shopify:\s*/i, '')
+                                   .replace(/If you report this error,.*$/i, '')
+                                   .trim();
+          }
+        }
+
         setMessage({
-          type: 'error',
-          text: `✗ Failed to register: ${data.error || 'Unknown error'}`,
+          type: messageType,
+          text: errorMessage,
         });
       }
     } catch (error: any) {
@@ -80,9 +115,22 @@ export default function RegisterCarrierButton() {
             marginTop: '16px',
             padding: '12px 16px',
             borderRadius: '6px',
-            background: message.type === 'success' ? '#d1fae5' : '#fee2e2',
-            color: message.type === 'success' ? '#065f46' : '#991b1b',
-            border: `1px solid ${message.type === 'success' ? '#10b981' : '#ef4444'}`,
+            background: 
+              message.type === 'success' ? '#d1fae5' : 
+              message.type === 'warning' ? '#fef3c7' : 
+              '#fee2e2',
+            color: 
+              message.type === 'success' ? '#065f46' : 
+              message.type === 'warning' ? '#92400e' : 
+              '#991b1b',
+            border: `1px solid ${
+              message.type === 'success' ? '#10b981' : 
+              message.type === 'warning' ? '#f59e0b' : 
+              '#ef4444'
+            }`,
+            whiteSpace: 'pre-line',
+            fontSize: '14px',
+            lineHeight: '1.5',
           }}
         >
           {message.text}

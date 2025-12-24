@@ -95,6 +95,64 @@ export async function GET() {
   }
 }
 
+// Update carrier service (toggle active status)
+export async function PUT(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const carrierId = searchParams.get("id");
+    const body = await request.json();
+
+    if (!carrierId) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Carrier service ID is required",
+        },
+        { status: 400 }
+      );
+    }
+
+    const session = new Session({
+      id: "offline_" + process.env.SHOPIFY_SHOP_DOMAIN!,
+      shop: process.env.SHOPIFY_SHOP_DOMAIN!,
+      state: "state",
+      isOnline: false,
+      accessToken: process.env.SHOPIFY_ACCESS_TOKEN!,
+      scope: "write_shipping",
+    });
+
+    const client = new shopify.clients.Rest({ session });
+
+    const response = await client.put({
+      path: `carrier_services/${carrierId}`,
+      data: {
+        carrier_service: {
+          active: body.active,
+        },
+      },
+    });
+
+    console.log(`🟢 Carrier service updated to ${body.active ? 'active' : 'inactive'}`);
+
+    return NextResponse.json({
+      success: true,
+      message: `Carrier service ${body.active ? 'activated' : 'deactivated'} successfully`,
+      data: response.body,
+    });
+  } catch (error: any) {
+    console.error("🔴 Error updating carrier service:", error);
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: error.message,
+        details: error.response?.body || error,
+      },
+      { status: 500 }
+    );
+  }
+}
+
 // Delete carrier service
 export async function DELETE(request: NextRequest) {
   try {
