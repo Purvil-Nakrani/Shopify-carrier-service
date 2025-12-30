@@ -71,6 +71,8 @@ export async function POST(request: NextRequest) {
   );
   const startTime = Date.now();
 
+  let res;
+
   try {
     // Get raw body for signature verification
     const rawBody = await request.text();
@@ -84,7 +86,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = JSON.parse(rawBody);
-    console.log("🟢 body===================", body);
+    console.log("🟢 body items===================", body.rate.items);
     const requestId = `SPEEDSHIP-${Date.now()}-${Math.random()
       .toString(36)
       .substr(2, 9)}`;
@@ -121,10 +123,10 @@ export async function POST(request: NextRequest) {
 
       // Extract custom dimensions from cart item properties (for roll products)
       const customWidth = parseFloat(
-        item.properties?.Width || item.properties?.width || 0
+        item.properties?.Width || item.properties?.width || 4
       );
       const customLength = parseFloat(
-        item.properties?.Length || item.properties?.length || 0
+        item.properties?.Length || item.properties?.length || 100
       );
       const itemQuantity = parseInt(item.quantity);
 
@@ -179,14 +181,14 @@ export async function POST(request: NextRequest) {
       // Get dimensions for freight calculation
       const itemLength =
         customLength > 0
-          ? customLength * 12
-          : parseFloat(item.properties?.dimension_length || 48);
+          ? customLength
+          : parseFloat(item.properties?.dimension_length || 100);
       const itemWidth =
         customWidth > 0
-          ? customWidth * 12
-          : parseFloat(item.properties?.dimension_width || 40);
+          ? customWidth
+          : parseFloat(item.properties?.dimension_width || 4);
       const itemHeight = parseFloat(
-        item.properties?.dimension_height || item.properties?.height || 48
+        item.properties?.dimension_height || item.properties?.height || 1
       );
 
       freightItems.push({
@@ -214,7 +216,7 @@ export async function POST(request: NextRequest) {
       origin,
       destination,
       weight: totalWeight,
-      price: parseFloat(rate.subtotal_price || 0),
+      price: parseFloat(rate.order_totals.subtotal_price || 0),
       items: items.map((item: any, index: any) => ({
         ...item,
         calculatedWeight: freightItems[index]?.perItemWeight,
@@ -237,12 +239,14 @@ export async function POST(request: NextRequest) {
         `🔴 ⚠️ Speedship API only supports US domestic shipping. Origin: ${originCountry}, Destination: ${destinationCountry}`
       );
       console.log("🔴 Skipping Speedship API call for non-US addresses");
-      
+
       // Return empty rates for non-US addresses
       const totalProcessingTime = Date.now() - startTime;
-      console.log(`🟢 Total processing time============= ${totalProcessingTime}ms`);
-      return NextResponse.json({ 
-        rates: [] 
+      console.log(
+        `🟢 Total processing time============= ${totalProcessingTime}ms`
+      );
+      return NextResponse.json({
+        rates: [],
       });
     }
 
@@ -291,12 +295,12 @@ export async function POST(request: NextRequest) {
         //   items: freightItems.map((item: any) => {
         //     // Ensure minimum weight of 1 lb to prevent Speedship API errors
         //     const itemWeight = Math.max(item.weight, 1);
-            
+
         //     // Log when using default weight
         //     if (item.weight === 0) {
         //       console.warn(`🔴 ⚠️ Product has no weight configured, using default minimum: ${itemWeight} lb`);
         //     }
-            
+
         //     return {
         //       weight: itemWeight,
         //       weightUnit: "LBS",
@@ -314,67 +318,232 @@ export async function POST(request: NextRequest) {
         //     };
         //   }),
         // };
+
         const speedshipRequest = {
-  accountNumber: "12345678",
+          request: {
+            productType: "LTL",
+            shipment: {
+              shipmentDate: new Date()
+                .toISOString()
+                .slice(0, 19)
+                .replace("T", " "),
 
-  shipment: {
-    mode: "LTL",
+              originAddress: {
+                address: {
+                  addressLineList: [rate.origin?.address1 || "123 Main St"], // Use actual address
+                  locality: rate.origin?.city || "Los Angeles",
+                  region: rate.origin?.province || "CA",
+                  postalCode: origin || "90001", // Use calculated origin
+                  countryCode: rate.origin?.country || "US",
+                  companyName: rate.origin?.company || "Shipper",
+                  phone: rate.origin?.phone || "+18007587447",
+                  contactList: [
+                    {
+                      firstName: rate.origin?.first_name || "John",
+                      lastName: rate.origin?.last_name || "Smith",
+                      phone: rate.origin?.phone || "+18007587447",
+                      contactType: "SENDER",
+                    },
+                  ],
+                },
+                locationType: "COMMERCIAL",
+              },
 
-    origin: {
-      city: rate.origin.city,
-      state: rate.origin.province,
-      postalCode: rate.origin.postal_code,
-      countryCode: rate.origin.country || "US",
-      residential: false
-    },
+              destinationAddress: {
+                address: {
+                  addressLineList: [destination.address1 || "456 Broadway"],
+                  locality: destination.city || "SALT LAKE CITY",
+                  region: destination.province || "UT",
+                  postalCode: destination.postal_code || "84047",
+                  countryCode: destination.country || "US",
+                  companyName: destination.company || "Recipient",
+                  phone: destination.phone || "+18669987447",
+                  contactList: [
+                    {
+                      firstName: destination.first_name || "Mary",
+                      lastName: destination.last_name || "Jones",
+                      phone: destination.phone || "+18669987447",
+                      contactType: "RECEIVER",
+                    },
+                  ],
+                },
+                locationType: "COMMERCIAL",
+              },
 
-    destination: {
-      city: destination.city,
-      state: destination.province,
-      postalCode: destination.postal_code,
-      countryCode: destination.country || "US",
-      residential: false
-    },
+              handlingUnitList: freightItems.map((item, index) => {
+                return {
+                  billedDimension: {
+                    length: { value: item.length, unit: "IN" },
+                    width: { value: item.width, unit: "IN" },
+                    height: { value: item.height, unit: "IN" },
+                  },
 
-    handlingUnits: freightItems.map((item: any) => {
-  const weight = Math.max(Number(item.weight) || 0, 100);
+                  isMixedClass: false,
+                  isStackable: false,
+                  marksAndNumbers: null,
+                  packagingType: "PLT",
+                  quantity: 1,
 
-  const length = Number(item.length) || 48;
-  const width  = Number(item.width)  || 40;
-  const height = Number(item.height) || 48;
+                  shippedItemList: [
+                    {
+                      commodityClass: "55",
+                      commodityDescription: "12121",
+                      commodityType: null,
+                      dimensions: {
+                        length: {
+                          value: item.length,
+                          unit: "in",
+                        },
+                        width: {
+                          value: item.width,
+                          unit: "in",
+                        },
+                        height: {
+                          value: item.height,
+                          unit: "in",
+                        },
+                      },
+                      isHazMat: false,
+                      hazMatItemInfo: {
+                        hazIdentificationNbr: "UN1234",
+                        hazProperShippingName: "Proper Commodity Name",
+                        hazClassType: "1.1A, 6.1",
+                        hazPackingGroupType: "PGI",
+                        hazEmergencyPhoneNbr: "2132342312",
+                        hazEmergencyName: "Emergency Contact",
+                        hazPlacardRequiredFlag: false,
+                        hazPlacardDetails: "Placard Details",
+                        hazERR: "ERR Number",
+                        hazFlashpointTemperature: {
+                          value: 1,
+                          unit: "F",
+                        },
+                        hazAdditionalDetails: "Additional Haz Details",
+                      },
+                      name: "",
+                      NMFCDescription: null,
+                      NMFCNbr: null,
+                      packagingType: "",
+                      quantity: 1,
+                      weight: {
+                        value: totalWeight,
+                        unit: "LB",
+                      },
+                    },
+                  ],
+                  sortAndSegregateFlag: true,
+                  weight: {
+                    value: totalWeight,
+                    unit: "LB",
+                  },
+                };
+              }),
 
-  const volume = calculateVolume({ length, width, height });
+              totalHandlingUnitCount: freightItems.length,
+              totalWeight: {
+                value: Math.max(Math.ceil(totalWeight), 1), // Use calculated total weight
+                unit: "LB",
+              },
 
-  return {
-    type: "PALLET",
-    quantity: 1,
+              description: "Freight shipment",
+              returnLabelFlag: false,
+              residentialDeliveryFlag: false,
+              residentialPickupFlag: false,
+              isSignatureRequired: false,
+              insuranceRequestFlag: true,
+              insuredItemConditions: "USED",
+              insuredCommodityCategory: "400",
+              insuredMarksNumbers: "1234A",
+              totalDeclaredValue: {
+                value: "10000",
+                unit: "USD",
+              },
+              handlingCharge: {
+                value: 50,
+                unit: "PERCENT",
+              },
+              appointmentDeliveryFlag: true,
+              holdAtTerminalFlag: false,
+              insideDeliveryFlag: false,
+              insidePickupFlag: false,
+              carrierTerminalPickupFlag: false,
+              liftgateDeliveryFlag: false,
+              liftgatePickupFlag: false,
+              notifyBeforeDeliveryFlag: false,
+              protectionFromColdFlag: false,
+              sortAndSegregateFlag: false,
+              pickupSpecialInstructions:
+                "this is a note in initial shopflow regarding pickup",
+              deliverySpecialInstructions:
+                "This is a note in initial shopflow regarding delivery",
+              tradeshowDeliveryFlag: false,
+              tradeshowDeliveryName: "",
+              tradeshowPickupFlag: false,
+              tradeshowPickupName: "",
+            },
+          },
+          correlationId: requestId, // Use your generated requestId
+        };
 
-    weight: {
-      value: weight,
-      unit: "LB"
-    },
+        //         const speedshipRequest = {
+        //   accountNumber: "12345678",
 
-    dimensions: {
+        //   shipment: {
+        //     mode: "LTL",
 
-      
-      length,
-      width,
-      height,
-      unit: "IN"
-    },
+        //     origin: {
+        //       city: rate.origin.city,
+        //       state: rate.origin.province,
+        //       postalCode: rate.origin.postal_code,
+        //       countryCode: rate.origin.country || "US",
+        //       residential: false
+        //     },
 
-    freightClass: calculateFreightClass(weight, volume)
-  };
-})
+        //     destination: {
+        //       city: destination.city,
+        //       state: destination.province,
+        //       postalCode: destination.postal_code,
+        //       countryCode: destination.country || "US",
+        //       residential: false
+        //     },
 
-  },
+        //     handlingUnits: freightItems.map((item: any) => {
+        //   const weight = Math.max(Number(item.weight) || 0, 100);
 
-  accessorials: {
-    liftgateDelivery: false,
-    notifyBeforeDelivery: false
-  }
-};
+        //   const length = Number(item.length) || 48;
+        //   const width  = Number(item.width)  || 40;
+        //   const height = Number(item.height) || 48;
 
+        //   const volume = calculateVolume({ length, width, height });
+
+        //   return {
+        //     type: "PALLET",
+        //     quantity: 1,
+
+        //     weight: {
+        //       value: weight,
+        //       unit: "LB"
+        //     },
+
+        //     dimensions: {
+
+        //       length,
+        //       width,
+        //       height,
+        //       unit: "IN"
+        //     },
+
+        //     freightClass: calculateFreightClass(weight, volume)
+        //   };
+        // })
+
+        //   },
+
+        //   accessorials: {
+        //     liftgateDelivery: false,
+        //     notifyBeforeDelivery: false
+        //   }
+        // };
 
         console.log(
           "🟢 Request Payload=============",
@@ -388,49 +557,137 @@ export async function POST(request: NextRequest) {
           {
             headers: {
               Authorization:
-                "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6Ik1EVTBSRUU0TmpFMU5ERTBORUkwTTBGRE5qUXlOemt3TmpSR05VVkZSREpFUlRJM01FUXpPQSJ9.eyJodHRwczovL3NwZWVkc2hpcC53d2V4LmNvbS9wcmltYXJ5Um9sZSI6IkN1c3RvbWVyX0FQSV9NMk0iLCJodHRwczovL3NwZWVkc2hpcC53d2V4LmNvbS9wcmltYXJ5TmFtZXNwYWNlIjoic3Mud3dleC5jdXN0b21lci5XMDAwOTA3MTU2IiwiaHR0cHM6Ly9zcGVlZHNoaXAud3dleC5jb20vc3NVc2VySWQiOiI4aDk0VENwME42ZmcwOWlwUDN5eUptZlBQdjVsMW1DRCIsImh0dHBzOi8vc3BlZWRzaGlwLnd3ZXguY29tL2FwcFR5cGUiOiJNMk0iLCJodHRwczovL3NwZWVkc2hpcC53d2V4LmNvbS9hcHBEb21haW4iOiJXV0VYIiwiaHR0cHM6Ly9zcGVlZHNoaXAud3dleC5jb20vZG9tYWluIjoid3dleCIsImh0dHBzOi8vc3BlZWRzaGlwLnd3ZXguY29tL2FwaVBsYW4iOiJzbWFsbCIsImh0dHBzOi8vc3BlZWRzaGlwLnd3ZXguY29tL2VtYWlsIjoiOGg5NFRDcDBONmZnMDlpcFAzeXlKbWZQUHY1bDFtQ0QiLCJpc3MiOiJodHRwczovL2F1dGguc3RhZ2luZy13d2V4LmNvbS8iLCJzdWIiOiI4aDk0VENwME42ZmcwOWlwUDN5eUptZlBQdjVsMW1DREBjbGllbnRzIiwiYXVkIjoic3RhZ2luZy13d2V4LWFwaWciLCJpYXQiOjE3NjYzNzg4NDcsImV4cCI6MTc2NjQ2NTI0NywiZ3R5IjoiY2xpZW50LWNyZWRlbnRpYWxzIiwiYXpwIjoiOGg5NFRDcDBONmZnMDlpcFAzeXlKbWZQUHY1bDFtQ0QifQ.UrS9WhYvcd_Ki6xnHEgPc26U9Wkp6DjIfDcCn1vMSy3ihfQGQx7j9-3yWIUIawmSWAfr06LK33ICJjtQFpbIer9rmtpD3j25vQTj7R6KLU_9HM7QNb26ghaQpquVW9qFXM5lmtZSOwkzhDBXsMa55gBb74Egjt1HKKrv6Sj4pU57TY4-KR_7DFhTCQZA5RCJVewXY5H_slNagXhtb0gb8R6cd9Zav1ttVES_bLYAADh9hgIfPeVmJrHLw0njUd4ug3b5elnBHw3FmRRvkjtYj2VrFk2JILzs5P2YIE0mmGp4GQuy9fQWAnSWhP07962j5NXpd1rJXkdO_CDhRw_X1A",
+                "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6Ik1EVTBSRUU0TmpFMU5ERTBORUkwTTBGRE5qUXlOemt3TmpSR05VVkZSREpFUlRJM01FUXpPQSJ9.eyJodHRwczovL3NwZWVkc2hpcC53d2V4LmNvbS9wcmltYXJ5Um9sZSI6IkN1c3RvbWVyX0FQSV9NMk0iLCJodHRwczovL3NwZWVkc2hpcC53d2V4LmNvbS9wcmltYXJ5TmFtZXNwYWNlIjoic3Mud3dleC5jdXN0b21lci5XMDAwOTA3MTU2IiwiaHR0cHM6Ly9zcGVlZHNoaXAud3dleC5jb20vc3NVc2VySWQiOiI4aDk0VENwME42ZmcwOWlwUDN5eUptZlBQdjVsMW1DRCIsImh0dHBzOi8vc3BlZWRzaGlwLnd3ZXguY29tL2FwcFR5cGUiOiJNMk0iLCJodHRwczovL3NwZWVkc2hpcC53d2V4LmNvbS9hcHBEb21haW4iOiJXV0VYIiwiaHR0cHM6Ly9zcGVlZHNoaXAud3dleC5jb20vZG9tYWluIjoid3dleCIsImh0dHBzOi8vc3BlZWRzaGlwLnd3ZXguY29tL2FwaVBsYW4iOiJzbWFsbCIsImh0dHBzOi8vc3BlZWRzaGlwLnd3ZXguY29tL2VtYWlsIjoiOGg5NFRDcDBONmZnMDlpcFAzeXlKbWZQUHY1bDFtQ0QiLCJpc3MiOiJodHRwczovL2F1dGguc3RhZ2luZy13d2V4LmNvbS8iLCJzdWIiOiI4aDk0VENwME42ZmcwOWlwUDN5eUptZlBQdjVsMW1DREBjbGllbnRzIiwiYXVkIjoic3RhZ2luZy13d2V4LWFwaWciLCJpYXQiOjE3NjcwOTAwMDIsImV4cCI6MTc2NzE3NjQwMiwiZ3R5IjoiY2xpZW50LWNyZWRlbnRpYWxzIiwiYXpwIjoiOGg5NFRDcDBONmZnMDlpcFAzeXlKbWZQUHY1bDFtQ0QifQ.RvkJ-E1LJXEsLmLF9_HqeZftwKQrEoEZ-WCEjzd2rMEwmDHVKLDYUJBo2NAUTqLni9TOAjFnXFe_tzZnteYF_D0HLC5HQ5QyWL8-0yn4dznhXYBdYuGL6V91F57dpNQJSfw3wGsR-nyvJtuSdCFclG5k2SO2xrfZgrfqeyhF4ig00MbWYo-tqou6U0KzO-4ulJL1H2tPHkhtYHScgHE5e-vaX48Jrtl0GBNawMkny6J_VRkPK93VM6g69cuRdc_TNFGlfIFeUCzXAa0zDPbG43LfAk1JQpS49_ClW9-SMYleNE7RInsDn0BRXjvWUd5e3QU5ef0r8MHdfLZQ6Nx9OA",
               "Content-Type": "application/json",
             },
-            timeout: 6000, // 6 second timeout
+            timeout: 10000, // 6 second timeout
           }
         );
-        console.log("🟢 response===================", response.data);
-        const speedshipResponseTime = Date.now() - speedshipStartTime;
-        console.log(`🟢 Speedship API response time: ${speedshipResponseTime}ms`);
-        console.log("🟢 Response:", JSON.stringify(response.data, null, 2));
 
-        // Parse Speedship response
+        res = response.data;
+        const speedshipResponseTime = Date.now() - speedshipStartTime;
+
+        const offerList = response.data?.response?.offerList || [];
+
+        let selectedOffer = null;
+
+        if (offerList.length > 0) {
+          selectedOffer = offerList
+            .filter((o: any) => o.totalOfferPrice?.value)
+            .sort(
+              (a: any, b: any) =>
+                Number(a.totalOfferPrice.value) -
+                Number(b.totalOfferPrice.value)
+            )[0];
+        }
+
+        if (!selectedOffer) {
+          throw new Error("No valid LTL offers returned");
+        }
+
+        // Parse Speedship API response based on the actual structure
         let speedshipRate = 0;
         let transitDays = 5;
         let serviceLevel = "Standard Freight";
         let quoteId = `SPEEDSHIP-${Date.now()}`;
+        let offerId = "";
+        let productTransactionId = "";
 
-        // Try to extract rate from various possible response structures
-        if (response.data) {
-          // Adjust these based on actual Speedship API response structure
-          if (response.data.quote) {
-            speedshipRate = parseFloat(response.data.quote.totalCharge || 0);
-            transitDays = parseInt(response.data.quote.transitTime || 5);
-            serviceLevel =
-              response.data.quote.serviceLevel || "Standard Freight";
-            quoteId = response.data.quoteId || quoteId;
-          } else if (response.data.totalCharge) {
-            speedshipRate = parseFloat(response.data.totalCharge || 0);
-            transitDays = parseInt(response.data.transitTime || 5);
-            serviceLevel = response.data.serviceLevel || "Standard Freight";
-            quoteId = response.data.quoteId || quoteId;
-          } else if (response.data.rate) {
-            speedshipRate = parseFloat(response.data.rate || 0);
-            transitDays = parseInt(response.data.transitDays || 5);
-            serviceLevel = response.data.serviceLevel || "Standard Freight";
-            quoteId = response.data.quoteId || quoteId;
-          }
+        // // Try to extract rate from various possible response structures
+        // if (response.data) {
+        //   // Adjust these based on actual Speedship API response structure
+        //   if (response.data.quote) {
+        //     speedshipRate = parseFloat(response.data.quote.totalCharge || 0);
+        //     transitDays = parseInt(response.data.quote.transitTime || 5);
+        //     serviceLevel = response.data.quote.serviceLevel || "Standard Freight";
+        //     quoteId = response.data.quoteId || quoteId;
+        //   } else if (response.data.totalCharge) {
+        //     speedshipRate = parseFloat(response.data.totalCharge || 0);
+        //     transitDays = parseInt(response.data.transitTime || 5);
+        //     serviceLevel = response.data.serviceLevel || "Standard Freight";
+        //     quoteId = response.data.quoteId || quoteId;
+        //   } else if (response.data.rate) {
+        //     speedshipRate = parseFloat(response.data.rate || 0);
+        //     transitDays = parseInt(response.data.transitDays || 5);
+        //     serviceLevel = response.data.serviceLevel || "Standard Freight";
+        //     quoteId = response.data.quoteId || quoteId;
+        //   }
+        // }
+
+        if (
+          response.data?.response?.offerList &&
+          response.data.response.offerList.length > 0
+        ) {
+          // Get the first (usually best) offer
+          const bestOffer = response.data.response.offerList[0];
+
+          // Extract essential IDs for future quote/booking
+          offerId = bestOffer.offerId || "";
+          productTransactionId = bestOffer.productTransactionId || "";
+
+          // Extract pricing from offeredProductList
+          // if (
+          //   bestOffer.offeredProductList &&
+          //   bestOffer.offeredProductList.length > 0
+          // ) {
+          //   const product = bestOffer.offeredProductList[0];
+
+          //   // Get the offer price
+          //   if (product.offerPrice?.value) {
+          //     speedshipRate = parseFloat(product.offerPrice.value);
+          //   }
+
+          //   // Extract service details
+          //   if (product.serviceDetail?.name) {
+          //     serviceLevel = product.serviceDetail.name;
+          //   }
+
+          //   // Extract transit time information
+          //   if (product.shopRQShipment?.timeInTransit?.transitDays) {
+          //     transitDays = parseInt(
+          //       product.shopRQShipment.timeInTransit.transitDays
+          //     );
+          //   }
+
+          //   // Get carrier service level
+          //   if (product.shopRQShipment?.timeInTransit?.serviceLevel) {
+          //     serviceLevel = product.shopRQShipment.timeInTransit.serviceLevel;
+          //   }
+
+          //   // Extract SCAC code (carrier identifier)
+          //   if (product.shopRQShipment?.timeInTransit?.scac) {
+          //     const scac = product.shopRQShipment.timeInTransit.scac;
+          //     serviceLevel = `${scac} - ${serviceLevel}`;
+          //   }
+          // }
+          const product = selectedOffer.offeredProductList[0];
+
+          speedshipRate = Number(product.offerPrice.value);
+          transitDays =
+            Number(product.shopRQShipment?.timeInTransit?.transitDays) || 5;
+
+          const scac = product.shopRQShipment?.timeInTransit?.scac || "LTL";
+
+          serviceLevel =
+            product.shopRQShipment?.timeInTransit?.serviceLevel || "Freight";
+
+          // Get total offer price as fallback
+          // if (speedshipRate === 0 && bestOffer.totalOfferPrice?.value) {
+          //   speedshipRate = parseFloat(bestOffer.totalOfferPrice.value);
+          // }
+
+          console.log("🟢 Parsed Rate Details:");
+          console.log(`   - Rate: $${speedshipRate}`);
+          console.log(`   - Transit Days: ${transitDays}`);
+          console.log(`   - Service Level: ${serviceLevel}`);
+          console.log(`   - Offer ID: ${offerId}`);
+          console.log(`   - Product Transaction ID: ${productTransactionId}`);
         }
 
-        // Log Speedship response
+        // Log Speedship response with all important details
         await logWWEXResponse({
           requestId,
-          quoteId,
+          quoteId: quoteId,
           rate: speedshipRate,
           transitDays,
           serviceLevel: `Speedship ${serviceLevel}`,
@@ -453,16 +710,22 @@ export async function POST(request: NextRequest) {
 
           // Add Speedship rate to response
           rates.push({
-            service_name: "Speedship Freight Shipping",
+            service_name: `Speedship Freight - ${serviceLevel}`,
             service_code: "SPEEDSHIP_FREIGHT",
-            total_price: (speedshipRate * 100).toString(),
+            total_price: (speedshipRate * 100).toString(), // Convert to cents for Shopify
             currency: "USD",
             description: `Estimated ${transitDays} business days`,
             min_delivery_date: getDeliveryDate(transitDays).toISOString(),
             max_delivery_date: getDeliveryDate(transitDays + 2).toISOString(),
           });
+
+          console.log(
+            "🟢 Successfully added Speedship rate to Shopify response"
+          );
         } else {
-          console.warn("🔴 Speedship API returned invalid rate (0 or undefined)");
+          console.warn(
+            "🔴 Speedship API returned invalid rate (0 or undefined)"
+          );
         }
       } catch (error: any) {
         const speedshipResponseTime = Date.now() - speedshipStartTime;
@@ -483,7 +746,7 @@ export async function POST(request: NextRequest) {
           (sum, item) => sum + item.totalWeight,
           0
         );
-        
+
         const baseRate = 150;
         const perLbRate = 0.5;
         const estimatedRate = baseRate + totalWeight * perLbRate;
@@ -504,10 +767,14 @@ export async function POST(request: NextRequest) {
     }
 
     const totalProcessingTime = Date.now() - startTime;
-    console.log(`🟢 Total processing time============= ${totalProcessingTime}ms`);
+    console.log(
+      `🟢 Total processing time============= ${totalProcessingTime}ms`
+    );
 
     // Return shipping rates to Shopify
-    return NextResponse.json({ rates });
+    // return NextResponse.json({ rates });
+    // return NextResponse.json({ res });
+    return NextResponse.json({ rates: [] });
   } catch (error: any) {
     console.error("🔴 Speedship Estimate Error:", error);
 
