@@ -782,7 +782,7 @@ export class FedExClient {
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
         },
-      }
+      },
     );
 
     this.accessToken = response.data.access_token;
@@ -822,7 +822,7 @@ export class FedExClient {
   // =====================================================
 
   private extractDimensionsFromName(
-    name: string
+    name: string,
   ): { width: number; length: number } | null {
     // Try patterns like "4'x3'", "4x6", "24\"x24\"", "48x120"
 
@@ -869,11 +869,11 @@ export class FedExClient {
   private calculateRollDiameter(
     thicknessIn: number,
     lengthFt: number,
-    coreDiameterIn = 4
+    coreDiameterIn = 4,
   ): number {
     const lengthIn = lengthFt * 12;
     return Math.sqrt(
-      Math.pow(coreDiameterIn, 2) + (4 * thicknessIn * lengthIn) / Math.PI
+      Math.pow(coreDiameterIn, 2) + (4 * thicknessIn * lengthIn) / Math.PI,
     );
   }
 
@@ -946,7 +946,7 @@ export class FedExClient {
 
         // Roll dimensions for FedEx (lying on side)
         const rollDiameter = Math.ceil(
-          this.calculateRollDiameter(thickness, rollLengthFt)
+          this.calculateRollDiameter(thickness, rollLengthFt),
         );
 
         length = rollWidthFt * 12; // Convert feet to inches (roll length)
@@ -958,7 +958,7 @@ export class FedExClient {
         console.log(`   Roll: ${rollWidthFt}' wide × ${rollLengthFt}' long`);
         console.log(`   Calculated diameter: ${rollDiameter}"`);
         console.log(
-          `   Package dimensions: ${length}" × ${width}" × ${height}"`
+          `   Package dimensions: ${length}" × ${width}" × ${height}"`,
         );
       } else if (type === "MAT") {
         // ✅ MAT: Extract from name, folded for shipping
@@ -979,10 +979,10 @@ export class FedExClient {
         console.log(`🟢 MAT: ${item.name}`);
         console.log(`   Thickness: ${thickness}"`);
         console.log(
-          `   Original size: ${dims?.width || 4}' × ${dims?.length || 6}'`
+          `   Original size: ${dims?.width || 4}' × ${dims?.length || 6}'`,
         );
         console.log(
-          `   Folded dimensions: ${length}" × ${width}" × ${height}"`
+          `   Folded dimensions: ${length}" × ${width}" × ${height}"`,
         );
       } else {
         // ✅ TILE: Extract from name
@@ -1002,10 +1002,10 @@ export class FedExClient {
         console.log(`🟢 TILE: ${item.name}`);
         console.log(`   Thickness: ${thickness}"`);
         console.log(
-          `   Tile size: ${dims?.width || 2}' × ${dims?.length || 2}'`
+          `   Tile size: ${dims?.width || 2}' × ${dims?.length || 2}'`,
         );
         console.log(
-          `   Package dimensions: ${length}" × ${width}" × ${height}"`
+          `   Package dimensions: ${length}" × ${width}" × ${height}"`,
         );
       }
 
@@ -1026,7 +1026,7 @@ export class FedExClient {
       console.log(
         `   Weight: ${perItemWeight} lbs × ${quantity} = ${
           perItemWeight * quantity
-        } lbs`
+        } lbs`,
       );
     }
 
@@ -1038,7 +1038,7 @@ export class FedExClient {
   // =====================================================
 
   async getSplitShipmentRate(
-    request: FedExRateRequest
+    request: FedExRateRequest,
   ): Promise<FedExRateResponse> {
     console.log("🟢 FedEx: Processing rate request...");
     const startTime = Date.now();
@@ -1047,34 +1047,67 @@ export class FedExClient {
       const processed = this.processShopifyItems(request.items);
       const packages: any[] = [];
 
+      let currentPackageWeight = 0;
+
+      for (const item of processed) {
+        for (let i = 0; i < item.quantity; i++) {
+          if (currentPackageWeight + item.weight > 150) {
+            packages.push({ weight: currentPackageWeight });
+            currentPackageWeight = 0;
+          }
+          currentPackageWeight += item.weight;
+        }
+      }
+
+      if (currentPackageWeight > 0) {
+        packages.push({ weight: currentPackageWeight });
+      }
+
+      console.log("package====================>",JSON.stringify(packages))
+
+      // let weight = 0;
+      // for (const item of processed) {
+      //   while ((weight = 150)) {
+      //     weight += item.weight;
+      //   }
+      // }
+
+      // for (const item of processed) {
+      //   if (item.totalWeight <= 750) {
+      //     packages.push({
+      //       weight: weight,
+      //     });
+      //   }
+      // }
+
       // ========================================
       // BUILD PACKAGE LIST
       // ========================================
-      for (const item of processed) {
-        if (item.weight > 150) {
-          throw new Error(
-            `FedEx parcel limit exceeded: ${item.weight} lbs for ${item.name}`
-          );
-        }
+      // for (const item of processed) {
+      //   if (item.weight > 150) {
+      //     throw new Error(
+      //       `FedEx parcel limit exceeded: ${item.weight} lbs for ${item.name}`,
+      //     );
+      //   }
 
-        // Each item becomes a separate package
-        for (let i = 0; i < item.quantity; i++) {
-          packages.push({
-            weight: item.weight,
-            dimensions: {
-              length: item.length,
-              width: item.width,
-              height: item.height,
-            },
-            itemName: item.name,
-          });
-        }
-      }
+      //   // Each item becomes a separate package
+      //   for (let i = 0; i < item.quantity; i++) {
+      //     packages.push({
+      //       weight: item.weight,
+      //       dimensions: {
+      //         length: item.length,
+      //         width: item.width,
+      //         height: item.height,
+      //       },
+      //       itemName: item.name,
+      //     });
+      //   }
+      // }
 
       console.log(
         `🟢 FedEx: ${packages.length} packages, ${processed
           .reduce((sum, p) => sum + p.totalWeight, 0)
-          .toFixed(2)} lbs total`
+          .toFixed(2)} lbs total`,
       );
 
       if (packages.length === 0) {
@@ -1087,9 +1120,7 @@ export class FedExClient {
       // GET OAUTH TOKEN
       // ========================================
       // const accessToken = await this.getAccessToken();
-      const accessToken =
-        "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzY29wZSI6WyJDWFMtVFAiXSwiUGF5bG9hZCI6eyJjbGllbnRJZGVudGl0eSI6eyJjbGllbnRLZXkiOiJsN2YyYzRhMzk5Y2YxYzQxZGU4MmU1ZTA3M2IwOWFlZTc2In0sImF1dGhlbnRpY2F0aW9uUmVhbG0iOiJDTUFDIiwiYWRkaXRpb25hbElkZW50aXR5Ijp7InRpbWVTdGFtcCI6IjEzLUphbi0yMDI2IDAxOjIyOjI5IEVTVCIsImdyYW50X3R5cGUiOiJjbGllbnRfY3JlZGVudGlhbHMiLCJhcGltb2RlIjoiU2FuZGJveCIsImN4c0lzcyI6Imh0dHBzOi8vY3hzYXV0aHNlcnZlci1zdGFnaW5nLmFwcC5wYWFzLmZlZGV4LmNvbS90b2tlbi9vYXV0aDIifSwicGVyc29uYVR5cGUiOiJEaXJlY3RJbnRlZ3JhdG9yX0IyQiJ9LCJleHAiOjE3NjgyODg5NDksImp0aSI6IjljYzg2NTAxLTNlMTItNGRiMy1iMGQ0LTZlNjU0YzVlNzY2NCJ9.1lW76jZ3j76ogH1xrxjSId5tjPYXCHF5YwrBT1Ef4EHXBhUe8gsCu9tMTBERY0_BrGabaNHhfQ11NLWwGI3yJZGcyzniMNob3FqtPuyCWnILvamlMjU-tsP50DXdQJGnQdMq2OpqtLJ0Yb__cCq69fJQEhcFw7AzLwB6OFngdXNS1yUGfTewFoiONAhrRYyparZxyYPvXi81iHkkeALBLc_xF9q3OMa6rxg-M5espRUyNQb1dRu9hKhWHAV39z0GLqL0z-1rxbG-OHMqc7r6rNwJC276paI7YaxqdcYxOflazp7QPWxH83oCq22QRMpx5aR9RtbkNATRV3CEgGV4RNkzmTqfaSFy3NqIDC8sx5gkKCKTbdhYrISJAQitRfv5-zoF4X3G6zg919eW0V23GuxxLWhz2sjIedhKunxgejZp-ptkQwdZq7N68oqfO3IpFDdrDLbNMieQ5Tjzv4kiRXSFhZTM6K7PuFMesPOC-TEEZ_R6HGgo4K6TaaJGFs9W8JcEg-Nk8ibGriq39NeBOCiE2MLfe_Gu0_eHtWNsf2NF-pCeyLM2rFpBg0jLcgABP-Vlowi82F9lpV3kBuvebX5JkUL8e64NOsLKPOhReifR4vNMJ-ql5kesC5BgU223dzbswJHIdyr-oqGiwEu7ilanzOtD9lIz2gdhfB-Unmk";
-
+      const accessToken = await this.getAccessToken()
       // ========================================
       // BUILD FEDEX REQUEST
       // ========================================
@@ -1134,20 +1165,20 @@ export class FedExClient {
               // value: Math.ceil(pkg.weight),
               value: Number(pkg.weight.toFixed(1)),
             },
-              // dimensions: {
-              //   length: Math.ceil(pkg.dimensions.length),
-              //   width: Math.ceil(pkg.dimensions.width),
-              //   height: Math.ceil(pkg.dimensions.height),
-              //   // height: 3,
-              //   units: "IN",
-              // },
+            // dimensions: {
+            //   length: Math.ceil(pkg.dimensions.length),
+            //   width: Math.ceil(pkg.dimensions.width),
+            //   height: Math.ceil(pkg.dimensions.height),
+            //   // height: 3,
+            //   units: "IN",
+            // },
           })),
         },
       };
 
       console.log(
         "🟢 FedEx Request Payload:",
-        JSON.stringify(fedexRequest, null, 2)
+        JSON.stringify(fedexRequest, null, 2),
       );
 
       // ========================================
@@ -1163,7 +1194,7 @@ export class FedExClient {
             "X-locale": "en_US",
           },
           timeout: 15000,
-        }
+        },
       );
 
       const responseTime = Date.now() - startTime;
@@ -1181,7 +1212,7 @@ export class FedExClient {
       const transitDays = this.getFedExTransitDays(reply);
 
       console.log(
-        `🟢 FedEx Rate: $${shipment.totalNetFedExCharge}, Transit: ${transitDays} days`
+        `🟢 FedEx Rate: $${shipment.totalNetFedExCharge}, Transit: ${transitDays} days`,
       );
 
       return {
@@ -1199,7 +1230,7 @@ export class FedExClient {
       if (error.response) {
         console.error(
           "🔴 FedEx Error Response:",
-          JSON.stringify(error.response.data, null, 2)
+          JSON.stringify(error.response.data, null, 2),
         );
         console.error("🔴 Status:", error.response.status);
       }
@@ -1249,7 +1280,7 @@ export class FedExClient {
 
   private getFallbackRate(
     request: FedExRateRequest,
-    responseTime: number
+    responseTime: number,
   ): FedExRateResponse {
     console.log("🟢 Using FedEx fallback rate calculation");
 
@@ -1266,8 +1297,8 @@ export class FedExClient {
 
     console.log(
       `🟢 Fallback: ${totalPackages} packages, ${totalWeight.toFixed(
-        2
-      )} lbs total`
+        2,
+      )} lbs total`,
     );
 
     // Rate estimation
