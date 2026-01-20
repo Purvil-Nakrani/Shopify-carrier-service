@@ -743,7 +743,6 @@ interface ProcessedItem {
 // export default FedExClient;
 
 /* ======================================================================================================== */
-
 export class FedExClient {
   private apiUrl =
     process.env.FEDEX_API_URL || "https://apis-sandbox.fedex.com";
@@ -1319,3 +1318,598 @@ export class FedExClient {
 }
 
 export default FedExClient;
+
+
+// export class FedExClient {
+//   private apiUrl =
+//     process.env.FEDEX_API_URL || "https://apis-sandbox.fedex.com";
+//   private clientId =
+//     process.env.FEDEX_CLIENT_ID || "l7f2c4a399cf1c41de82e5e073b09aee76";
+//   private clientSecret =
+//     process.env.FEDEX_CLIENT_SECRET || "a970d01815e240e78c7af85b6a752b93";
+//   private accountNumber = process.env.FEDEX_ACCOUNT_NUMBER || "";
+
+//   private accessToken: string | null = null;
+//   private tokenExpiry = 0;
+
+//   // =====================================================
+//   // OAUTH TOKEN
+//   // =====================================================
+
+//   private async getAccessToken(): Promise<any> {
+//     if (this.accessToken && Date.now() < this.tokenExpiry) {
+//       return this.accessToken;
+//     }
+
+//     if (!this.clientId || !this.clientSecret) {
+//       throw new Error("FedEx credentials missing (CLIENT_ID / CLIENT_SECRET)");
+//     }
+
+//     console.log("🟢 Requesting FedEx OAuth token...");
+
+//     const response = await axios.post(
+//       `${this.apiUrl}/oauth/token`,
+//       new URLSearchParams({
+//         grant_type: "client_credentials",
+//         client_id: this.clientId,
+//         client_secret: this.clientSecret,
+//       }),
+//       {
+//         headers: {
+//           "Content-Type": "application/x-www-form-urlencoded",
+//         },
+//       },
+//     );
+
+//     this.accessToken = response.data.access_token;
+//     this.tokenExpiry = Date.now() + 55 * 60 * 1000;
+
+//     console.log("🟢 FedEx OAuth token obtained");
+//     return this.accessToken;
+//   }
+
+//   // =====================================================
+//   // HELPER: Extract thickness from product name
+//   // =====================================================
+
+//   private extractThickness(name: string): number {
+//     if (!name) return 0.25; // Default to 1/4"
+
+//     // 1️⃣ Try fraction like 1/4"
+//     const fractionMatch = name.match(/\b(\d+)\s*\/\s*(\d+)(?=")?/);
+//     if (fractionMatch) {
+//       const num = Number(fractionMatch[1]);
+//       const den = Number(fractionMatch[2]);
+//       return num / den;
+//     }
+
+//     // 2️⃣ Try mm like 8mm
+//     const mmMatch = name.match(/\b(\d+(?:\.\d+)?)\s*mm\b/i);
+//     if (mmMatch) {
+//       const mm = Number(mmMatch[1]);
+//       return mm / 25.4; // mm → inches
+//     }
+
+//     return 0.25; // Safe default
+//   }
+
+//   // =====================================================
+//   // HELPER: Extract dimensions from name
+//   // =====================================================
+
+//   private extractDimensionsFromName(
+//     name: string,
+//   ): { width: number; length: number } | null {
+//     const feetMatch = name.match(/(\d+)'\s*x\s*(\d+)'/i);
+//     if (feetMatch) {
+//       return { width: Number(feetMatch[1]), length: Number(feetMatch[2]) };
+//     }
+
+//     const inchMatch = name.match(/(\d+)"\s*x\s*(\d+)"/i);
+//     if (inchMatch) {
+//       return {
+//         width: Number(inchMatch[1]) / 12,
+//         length: Number(inchMatch[2]) / 12,
+//       };
+//     }
+
+//     const plainMatch = name.match(/(\d+)\s*x\s*(\d+)/i);
+//     if (plainMatch) {
+//       const val1 = Number(plainMatch[1]);
+//       const val2 = Number(plainMatch[2]);
+
+//       if (val1 < 10 && val2 < 10) {
+//         return { width: val1, length: val2 };
+//       } else {
+//         return {
+//           width: val1 / 12,
+//           length: val2 / 12,
+//         };
+//       }
+//     }
+
+//     return null;
+//   }
+
+//   // =====================================================
+//   // HELPER: Calculate roll diameter
+//   // =====================================================
+
+//   private calculateRollDiameter(
+//     thicknessIn: number,
+//     lengthFt: number,
+//     coreDiameterIn = 4,
+//   ): number {
+//     const lengthIn = lengthFt * 12;
+//     return Math.sqrt(
+//       Math.pow(coreDiameterIn, 2) + (4 * thicknessIn * lengthIn) / Math.PI,
+//     );
+//   }
+
+//   // =====================================================
+//   // HELPER: Determine product type
+//   // =====================================================
+
+//   private getProductType(item: ShopifyItem): "ROLL" | "MAT" | "TILE" {
+//     const hasWidthFt = Number(item.properties?.["Width (ft)"]) > 0;
+//     const hasLengthFt = Number(item.properties?.["Length (ft)"]) > 0;
+
+//     if (hasWidthFt && hasLengthFt) {
+//       return "ROLL";
+//     }
+
+//     if (item.name?.toLowerCase().includes("mat")) {
+//       return "MAT";
+//     }
+
+//     return "TILE";
+//   }
+
+//   // =====================================================
+//   // PROCESS SHOPIFY ITEMS
+//   // =====================================================
+
+//   private processShopifyItems(items: ShopifyItem[]): ProcessedItem[] {
+//     const processedItems: ProcessedItem[] = [];
+
+//     for (const item of items) {
+//       const type = this.getProductType(item);
+
+//       let perItemWeight = 0;
+
+//       if (item.properties?.Weight) {
+//         perItemWeight = Number(item.properties.Weight);
+//       } else {
+//         perItemWeight = Number((item.grams / 453.592).toFixed(2));
+//       }
+
+//       const isEmptyProperties =
+//         !item.properties ||
+//         (typeof item.properties === "object" &&
+//           Object.keys(item.properties).length === 0);
+
+//       const quantity = isEmptyProperties
+//         ? item.quantity
+//         : Number(item.properties.Quantity || item.quantity);
+
+//       let length = 48;
+//       let width = 48;
+//       let height = 8;
+
+//       const thickness = this.extractThickness(item.name);
+
+//       if (type === "ROLL") {
+//         const rollWidthFt = Number(item.properties?.["Width (ft)"] || 4);
+//         const rollLengthFt = Number(item.properties?.["Length (ft)"] || 10);
+
+//         const rollDiameter = Math.ceil(
+//           this.calculateRollDiameter(thickness, rollLengthFt),
+//         );
+
+//         length = rollWidthFt * 12;
+//         width = rollDiameter;
+//         height = rollDiameter;
+
+//         console.log(`🟢 ROLL: ${item.name}`);
+//         console.log(`   Thickness: ${thickness}"`);
+//         console.log(`   Roll: ${rollWidthFt}' wide × ${rollLengthFt}' long`);
+//         console.log(`   Calculated diameter: ${rollDiameter}"`);
+//         console.log(
+//           `   Package dimensions: ${length}" × ${width}" × ${height}"`,
+//         );
+//       } else if (type === "MAT") {
+//         const dims = this.extractDimensionsFromName(item.name);
+
+//         if (dims) {
+//           length = (dims.length * 12) / 2;
+//           width = dims.width * 12;
+//           height = 6;
+//         } else {
+//           length = (6 * 12) / 2;
+//           width = 4 * 12;
+//           height = 6;
+//         }
+
+//         console.log(`🟢 MAT: ${item.name}`);
+//         console.log(`   Thickness: ${thickness}"`);
+//         console.log(
+//           `   Original size: ${dims?.width || 4}' × ${dims?.length || 6}'`,
+//         );
+//         console.log(
+//           `   Folded dimensions: ${length}" × ${width}" × ${height}"`,
+//         );
+//       } else {
+//         const dims = this.extractDimensionsFromName(item.name);
+
+//         if (dims) {
+//           length = dims.length * 12;
+//           width = dims.width * 12;
+//           height = thickness;
+//         } else {
+//           length = 24;
+//           width = 24;
+//           height = thickness;
+//         }
+
+//         console.log(`🟢 TILE: ${item.name}`);
+//         console.log(`   Thickness: ${thickness}"`);
+//         console.log(
+//           `   Tile size: ${dims?.width || 2}' × ${dims?.length || 2}'`,
+//         );
+//         console.log(
+//           `   Package dimensions: ${length}" × ${width}" × ${height}"`,
+//         );
+//       }
+
+//       processedItems.push({
+//         weight: perItemWeight,
+//         totalWeight: perItemWeight * quantity,
+//         length,
+//         width,
+//         height,
+//         quantity,
+//         name: item.name,
+//         type,
+//       });
+
+//       console.log(
+//         `   Weight: ${perItemWeight} lbs × ${quantity} = ${
+//           perItemWeight * quantity
+//         } lbs`,
+//       );
+//     }
+
+//     return processedItems;
+//   }
+
+//   // =====================================================
+//   // SMART PACKAGE CONSOLIDATION (BIN PACKING)
+//   // =====================================================
+
+//   private consolidatePackages(items: ProcessedItem[]): ConsolidatedPackage[] {
+//     const packages: ConsolidatedPackage[] = [];
+    
+//     // Expand items to individual units
+//     const expandedItems: ProcessedItem[] = [];
+//     for (const item of items) {
+//       for (let i = 0; i < item.quantity; i++) {
+//         expandedItems.push({ ...item, quantity: 1 });
+//       }
+//     }
+
+//     // Sort by weight (largest first) for better packing
+//     expandedItems.sort((a, b) => b.weight - a.weight);
+
+//     for (const item of expandedItems) {
+//       let placed = false;
+
+//       // Try to fit into existing package
+//       for (const pkg of packages) {
+//         if (pkg.weight + item.weight <= 150) {
+//           pkg.weight += item.weight;
+//           pkg.items.push(item);
+          
+//           // Update dimensions (use maximum)
+//           pkg.dimensions.length = Math.max(pkg.dimensions.length, item.length);
+//           pkg.dimensions.width = Math.max(pkg.dimensions.width, item.width);
+//           pkg.dimensions.height = Math.max(pkg.dimensions.height, item.height);
+          
+//           placed = true;
+//           break;
+//         }
+//       }
+
+//       // Create new package if couldn't fit
+//       if (!placed) {
+//         packages.push({
+//           weight: item.weight,
+//           items: [item],
+//           dimensions: {
+//             length: item.length,
+//             width: item.width,
+//             height: item.height,
+//           },
+//         });
+//       }
+//     }
+
+//     return packages;
+//   }
+
+//   // =====================================================
+//   // GET ALL SERVICE RATES AND RETURN CHEAPEST
+//   // =====================================================
+
+//   private async getAllServiceRates(
+//     request: FedExRateRequest,
+//     packages: ConsolidatedPackage[],
+//     accessToken: string,
+//   ): Promise<{ service: string; rate: number; transitDays: number }[]> {
+//     // All FedEx services to compare (cheapest to fastest)
+//     const services = [
+//       "FEDEX_GROUND",
+//       "GROUND_HOME_DELIVERY",
+//       "FEDEX_EXPRESS_SAVER",
+//       "FEDEX_2_DAY",
+//       "FEDEX_2_DAY_AM",
+//       "STANDARD_OVERNIGHT",
+//       "PRIORITY_OVERNIGHT",
+//       "FIRST_OVERNIGHT",
+//     ];
+
+//     const rates: { service: string; rate: number; transitDays: number }[] = [];
+
+//     for (const serviceType of services) {
+//       try {
+//         const fedexRequest = {
+//           accountNumber: { value: this.accountNumber },
+//           rateRequestControlParameters: {
+//             returnTransitTimes: true,
+//           },
+//           requestedShipment: {
+//             shipDateStamp: new Date().toISOString().split("T")[0],
+//             pickupType: "DROPOFF_AT_FEDEX_LOCATION",
+//             serviceType: serviceType,
+//             packagingType: "YOUR_PACKAGING",
+//             preferredCurrency: "USD",
+//             rateRequestType: ["ACCOUNT"],
+//             shipper: {
+//               address: {
+//                 streetLines: [request.origin.address1],
+//                 city: request.origin.city,
+//                 stateOrProvinceCode: request.origin.province,
+//                 postalCode: request.origin.postal_code,
+//                 countryCode: request.origin.country,
+//               },
+//             },
+//             recipient: {
+//               address: {
+//                 streetLines: [request.destination.address1],
+//                 city: request.destination.city,
+//                 stateOrProvinceCode: request.destination.province,
+//                 postalCode: request.destination.postal_code,
+//                 countryCode: request.destination.country,
+//               },
+//             },
+//             requestedPackageLineItems: packages.map((pkg, i) => ({
+//               sequenceNumber: i + 1,
+//               groupPackageCount: 1,
+//               weight: {
+//                 units: "LB",
+//                 value: Number(pkg.weight.toFixed(1)),
+//               },
+//               dimensions: {
+//                 length: Math.ceil(pkg.dimensions.length),
+//                 width: Math.ceil(pkg.dimensions.width),
+//                 height: Math.ceil(pkg.dimensions.height),
+//                 units: "IN",
+//               },
+//             })),
+//           },
+//         };
+
+//         const response = await axios.post(
+//           `${this.apiUrl}/rate/v1/rates/quotes`,
+//           fedexRequest,
+//           {
+//             headers: {
+//               Authorization: `Bearer ${accessToken}`,
+//               "Content-Type": "application/json",
+//               "X-locale": "en_US",
+//             },
+//             timeout: 15000,
+//           },
+//         );
+
+//         const reply = response.data.output.rateReplyDetails[0];
+//         const shipment = reply.ratedShipmentDetails[0];
+//         const transitDays = this.getFedExTransitDays(reply);
+
+//         rates.push({
+//           service: serviceType,
+//           rate: shipment.totalNetFedExCharge,
+//           transitDays,
+//         });
+
+//         console.log(
+//           `   ${serviceType}: $${shipment.totalNetFedExCharge} (${transitDays} days)`,
+//         );
+//       } catch (error: any) {
+//         // Service not available for this route, skip
+//         console.log(`   ${serviceType}: Not available`);
+//       }
+//     }
+
+//     return rates;
+//   }
+
+//   // =====================================================
+//   // MAIN RATE FUNCTION - GETS CHEAPEST RATE
+//   // =====================================================
+
+//   async getSplitShipmentRate(
+//     request: FedExRateRequest,
+//   ): Promise<FedExRateResponse> {
+//     console.log("🟢 FedEx: Processing rate request for CHEAPEST option...");
+//     const startTime = Date.now();
+
+//     try {
+//       const processed = this.processShopifyItems(request.items);
+      
+//       // ✅ CONSOLIDATE INTO FEWEST PACKAGES
+//       const consolidatedPackages = this.consolidatePackages(processed);
+
+//       console.log(`\n🟢 Optimized Packaging:`);
+//       console.log(`   Total items: ${processed.reduce((sum, p) => sum + p.quantity, 0)}`);
+//       console.log(`   Consolidated into: ${consolidatedPackages.length} packages`);
+      
+//       consolidatedPackages.forEach((pkg, i) => {
+//         console.log(
+//           `   Package ${i + 1}: ${pkg.weight.toFixed(2)} lbs ` +
+//           `(${pkg.items.length} items) - ` +
+//           `${pkg.dimensions.length.toFixed(0)}" × ${pkg.dimensions.width.toFixed(0)}" × ${pkg.dimensions.height.toFixed(0)}"`
+//         );
+//       });
+
+//       const totalWeight = consolidatedPackages.reduce((sum, pkg) => sum + pkg.weight, 0);
+//       console.log(`   Total weight: ${totalWeight.toFixed(2)} lbs\n`);
+
+//       if (consolidatedPackages.length === 0) {
+//         throw new Error("No packages to ship");
+//       }
+
+//       // Get OAuth token
+//       const accessToken = await this.getAccessToken();
+
+//       // ✅ GET RATES FOR ALL SERVICES AND FIND CHEAPEST
+//       console.log("🟢 Comparing all available FedEx services:");
+//       const allRates = await this.getAllServiceRates(
+//         request,
+//         consolidatedPackages,
+//         accessToken,
+//       );
+
+//       if (allRates.length === 0) {
+//         throw new Error("No rates available from FedEx");
+//       }
+
+//       // Sort by rate (cheapest first)
+//       allRates.sort((a, b) => a.rate - b.rate);
+
+//       const cheapest = allRates[0];
+
+//       console.log(`\n✅ CHEAPEST OPTION: ${cheapest.service}`);
+//       console.log(`   Rate: $${cheapest.rate}`);
+//       console.log(`   Transit: ${cheapest.transitDays} days`);
+//       console.log(`   Packages: ${consolidatedPackages.length}`);
+//       console.log(`   Cost per package: $${(cheapest.rate / consolidatedPackages.length).toFixed(2)}\n`);
+
+//       const responseTime = Date.now() - startTime;
+//       console.log(`🟢 Total processing time: ${responseTime}ms`);
+
+//       return {
+//         quoteId: `FEDEX-${Date.now()}`,
+//         rate: cheapest.rate,
+//         currency: "USD",
+//         transitDays: cheapest.transitDays,
+//         serviceLevel: cheapest.service,
+//         packages: consolidatedPackages.length,
+//       };
+//     } catch (error: any) {
+//       const responseTime = Date.now() - startTime;
+//       console.error("🔴 FedEx API Error:", error.message);
+
+//       if (error.response) {
+//         console.error(
+//           "🔴 FedEx Error Response:",
+//           JSON.stringify(error.response.data, null, 2),
+//         );
+//         console.error("🔴 Status:", error.response.status);
+//       }
+
+//       return this.getFallbackRate(request, responseTime);
+//     }
+//   }
+
+//   // =====================================================
+//   // HELPER: Extract transit days from FedEx response
+//   // =====================================================
+
+//   private getFedExTransitDays(reply: any): number {
+//     const enumVal = reply.operationalDetail?.transitTime;
+//     if (enumVal) {
+//       const match = enumVal.match(/\d+/);
+//       if (match) return Number(match[0]);
+
+//       const MAP: Record<string, number> = {
+//         ONE_DAY: 1,
+//         TWO_DAYS: 2,
+//         THREE_DAYS: 3,
+//         FOUR_DAYS: 4,
+//         FIVE_DAYS: 5,
+//         SIX_DAYS: 6,
+//         SEVEN_DAYS: 7,
+//       };
+//       if (MAP[enumVal]) return MAP[enumVal];
+//     }
+
+//     const desc = reply.commit?.transitDays?.description;
+//     if (desc) {
+//       const match = desc.match(/\d+/);
+//       if (match) return Number(match[0]);
+//     }
+
+//     return 5;
+//   }
+
+//   // =====================================================
+//   // FALLBACK RATE CALCULATION
+//   // =====================================================
+
+//   private getFallbackRate(
+//     request: FedExRateRequest,
+//     responseTime: number,
+//   ): FedExRateResponse {
+//     console.log("🟢 Using FedEx fallback rate calculation");
+
+//     const processed = this.processShopifyItems(request.items);
+//     const packages = this.consolidatePackages(processed);
+//     const totalWeight = packages.reduce((sum, pkg) => sum + pkg.weight, 0);
+
+//     console.log(
+//       `🟢 Fallback: ${packages.length} packages, ${totalWeight.toFixed(2)} lbs total`,
+//     );
+
+//     // Conservative ground rate estimation
+//     const baseRatePerPackage = 15;
+//     const perLbRate = 0.35;
+//     const estimatedRate =
+//       packages.length * baseRatePerPackage + totalWeight * perLbRate;
+
+//     return {
+//       quoteId: `FEDEX-FALLBACK-${Date.now()}`,
+//       rate: Math.round(estimatedRate * 100) / 100,
+//       transitDays: 5,
+//       serviceLevel: "Ground (Estimated)",
+//       currency: "USD",
+//       packages: packages.length,
+//     };
+//   }
+// }
+
+// // =====================================================
+// // TYPE DEFINITIONS
+// // =====================================================
+
+// interface ConsolidatedPackage {
+//   weight: number;
+//   items: ProcessedItem[];
+//   dimensions: {
+//     length: number;
+//     width: number;
+//     height: number;
+//   };
+// }
+
+// export default FedExClient;
+

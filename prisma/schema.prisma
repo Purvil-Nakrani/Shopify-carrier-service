@@ -93,3 +93,14 @@ model ErrorLog {
   @@index([createdAt], map: "idx_created_at")
   @@map("error_logs")
 }
+
+model FinalShippingRate {
+  id           Int          @id @default(autoincrement())
+  requestId    String       @map ("request_id") @db.VarChar(255)
+  combinedRate Decimal?     @map("shipping_rate") @db.Decimal(10, 2)
+  transitDays  Int?         @map("transit_days") 
+  destination  Json         @map("destination")
+  items        Json         @map("items")
+  createdAt    DateTime     @default(now()) @map("created_at")
+}
+

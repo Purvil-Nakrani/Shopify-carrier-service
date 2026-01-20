@@ -49,6 +49,51 @@ export async function logWWEXResponse(data: {
   });
 }
 
+export async function getLatestWWEXRate() {
+  const latest = await prisma.finalShippingRate.findFirst({
+    // where: {
+    //   requestId: requestId,
+    //   shippingRate: {
+    //     not: null,
+    //   },
+    //   errorMessage: null,
+    // },
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+
+  if (!latest) {
+    return null;
+  }
+
+  return {
+    rate: latest.combinedRate?.toNumber() || null,
+    transitDays: latest.transitDays,
+    destination: latest.destination,
+    items: latest.items,
+    createdAt: latest.createdAt,
+  };
+}
+
+export async function logFinalShippingRate(data: { 
+  requestId: string;
+  combinedRate?: number;
+  transitDays?: number;
+  destination: any;
+  items: any;
+}) {
+  await prisma.finalShippingRate.create({
+    data: {
+      requestId: data.requestId,
+      combinedRate: data.combinedRate || null,
+      transitDays: data.transitDays || null,
+      destination: data.destination || null,
+      items: data.items
+    },
+  });
+}
+
 // Check rate cache
 export async function getCachedRate(cacheKey: string) {
   const cached = await prisma.rateCache.findFirst({

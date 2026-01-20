@@ -7,6 +7,8 @@ import {
   getCachedRate,
   cacheRate,
   logError,
+  getLatestWWEXRate,
+  logFinalShippingRate,
 } from "@/lib/database";
 import FedExClient from "@/lib/fedex-client";
 
@@ -37,10 +39,10 @@ const getAccessToken = async () => {
   }
 
   if (!clientId || !clientSecret) {
-    throw new Error("FedEx credentials missing (CLIENT_ID / CLIENT_SECRET)");
+    throw new Error("WWEx credentials missing (CLIENT_ID / CLIENT_SECRET)");
   }
 
-  console.log("🟢 Requesting FedEx OAuth token...");
+  console.log("🟢 Requesting WWEx OAuth token...");
 
   const response = await axios.post(
     `${apiUrl}/oauth/token`,
@@ -60,7 +62,7 @@ const getAccessToken = async () => {
   accessToken = response.data.access_token;
   tokenExpiry = Date.now() + 55 * 60 * 1000;
 
-  console.log("🟢 FedEx OAuth token obtained");
+  console.log("🟢 WWEx OAuth token obtained");
   return accessToken;
 };
 // =====================================================
@@ -582,6 +584,7 @@ export async function POST(request: NextRequest) {
     const rawBody = await request.text();
     const hmacHeader = request.headers.get("X-Shopify-Hmac-Sha256") || "";
     // console.log("🟢 hmacHeader===================", hmacHeader);
+    console.log("rawbody=========================>", rawBody);
 
     // Verify webhook authenticity
     if (!verifyShopifyWebhook(rawBody, hmacHeader)) {
@@ -740,7 +743,7 @@ export async function POST(request: NextRequest) {
             currency: "USD",
             // description:
             //   "Total shipment weight exceeds 20,000 lbs. Please contact support for a custom freight quote.",
-             description:
+            description:
               "This order exceeds the maximum freight weight limit. Please contact support to arrange a custom shipping quote.",
           },
         ],
@@ -1133,6 +1136,15 @@ export async function POST(request: NextRequest) {
         max_delivery_date: getDeliveryDate(maxTransitDays + 9).toISOString(),
       });
 
+      await logFinalShippingRate({
+        requestId: "",
+        combinedRate: totalRate,
+        transitDays: maxTransitDays,
+        destination: destination,
+        // allShipmentRates: allShipmentRates,
+        items:items
+      })
+
       console.log("✅ Successfully created combined rate");
     } else {
       console.warn("⚠️ No valid rates obtained");
@@ -1181,25 +1193,38 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET() {
-  return NextResponse.json({
-    status: "ok",
-    service: "Speedship Freight - Exact Address Distance-Based Routing",
-    version: "7.0.0",
-    features: [
-      "✅ Exact address geocoding for precise distance calculation",
-      "✅ Automatically routes to closest available warehouse",
-      "✅ Falls back to state coordinates if geocoding fails",
-      "✅ Supports accessories (tape, cleaner, adhesive)",
-      "✅ Multi-origin shipments combined into single rate",
-      "✅ Optimized freight cost calculation",
-      "✅ Geocoding result caching for performance",
-    ],
-    origins: {
-      RLX: "Pilot Mountain, NC (East Coast)",
-      ARC_AZ: "Surprise, AZ (West Coast)",
-      ARC_WI: "Cudahy, WI (Midwest)",
-    },
-    routing_logic:
-      "Geocodes exact destination address, calculates distance to warehouses, selects closest available warehouse",
-  });
+  // return NextResponse.json({
+  //   status: "ok",
+  //   service: "Speedship Freight - Exact Address Distance-Based Routing",
+  //   version: "7.0.0",
+  //   features: [
+  //     "✅ Exact address geocoding for precise distance calculation",
+  //     "✅ Automatically routes to closest available warehouse",
+  //     "✅ Falls back to state coordinates if geocoding fails",
+  //     "✅ Supports accessories (tape, cleaner, adhesive)",
+  //     "✅ Multi-origin shipments combined into single rate",
+  //     "✅ Optimized freight cost calculation",
+  //     "✅ Geocoding result caching for performance",
+  //   ],
+  //   origins: {
+  //     RLX: "Pilot Mountain, NC (East Coast)",
+  //     ARC_AZ: "Surprise, AZ (West Coast)",
+  //     ARC_WI: "Cudahy, WI (Midwest)",
+  //   },
+  //   routing_logic:
+  //     "Geocodes exact destination address, calculates distance to warehouses, selects closest available warehouse",
+  // });
+  try {
+    const rate = await getLatestWWEXRate();
+
+    return NextResponse.json({
+      success: true,
+      data: rate,
+    });
+  } catch (error: any) {
+    return NextResponse.json(
+      { success: false, error: error.message },
+      { status: 500 },
+    );
+  }
 }
