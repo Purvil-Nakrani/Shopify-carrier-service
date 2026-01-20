@@ -222,16 +222,26 @@ export async function POST(request: NextRequest) {
 
         const fedexResponse = await fedexClient.getSplitShipmentRate({
           origin: {
-            postalCode: origin,
+            postal_code: origin,
             country: rate.origin?.country || "US",
+            province: rate.origin?.province || "",
+            city: rate.origin?.city || "",
+            address1: rate.origin?.address1 || "Warehouse",
+            phone: rate.origin?.phone || "0000000000",
+            company_name: rate.origin?.company_name || "",
           },
           destination: {
-            postalCode: destination.postal_code || "",
+            postal_code: destination.postal_code || "",
             city: destination.city || "",
             province: destination.province || "",
             country: destination.country || "US",
+            address1: destination.address1 || "Customer Address",
+            phone: destination.phone || "",
+            company_name: destination.company_name || "",
           },
-          items: freightItems,
+          items: rate.items || [],
+          currency: rate.currency || "USD",
+          totalWeight,
         });
 
         const fedexResponseTime = Date.now() - fedexStartTime;

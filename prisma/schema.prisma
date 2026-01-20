@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -25,7 +25,7 @@ model RateRequest {
   wwexResponses          WWEXResponse[]
 
   @@index([originPostalCode, destinationPostalCode], map: "idx_postal_codes")
-  @@index([createdAt], map: "idx_created_at")
+  @@index([createdAt], map: "idx_rate_request_created_at")
   @@map("rate_requests")
 }
 
@@ -43,7 +43,7 @@ model WWEXResponse {
   rateRequest     RateRequest  @relation(fields: [requestId], references: [requestId])
 
   @@index([requestId], map: "idx_request_id")
-  @@index([createdAt], map: "idx_created_at")
+  @@index([createdAt], map: "idx_wwex_response_created_at")
   @@map("wwex_responses")
 }
 
@@ -90,7 +90,7 @@ model ErrorLog {
   createdAt    DateTime @default(now()) @map("created_at")
 
   @@index([errorType], map: "idx_error_type")
-  @@index([createdAt], map: "idx_created_at")
+  @@index([createdAt], map: "idx_error_log_created_at")
   @@map("error_logs")
 }
 
