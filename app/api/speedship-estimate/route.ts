@@ -12,6 +12,10 @@ import {
 } from "@/lib/database";
 import FedExClient from "@/lib/fedex-client";
 
+// Tell Next.js this is a dynamic route that should not be statically analyzed
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 // Verify Shopify webhook signature
 function verifyShopifyWebhook(rawBody: string, hmacHeader: string): boolean {
   const secret = process.env.SHOPIFY_API_SECRET || "";
