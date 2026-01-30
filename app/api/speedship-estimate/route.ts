@@ -12,10 +12,6 @@ import {
 } from "@/lib/database";
 import FedExClient from "@/lib/fedex-client";
 
-// Tell Next.js this is a dynamic route that should not be statically analyzed
-export const dynamic = 'force-dynamic';
-export const runtime = 'nodejs';
-
 // Verify Shopify webhook signature
 function verifyShopifyWebhook(rawBody: string, hmacHeader: string): boolean {
   const secret = process.env.SHOPIFY_API_SECRET || "";
@@ -27,12 +23,13 @@ function verifyShopifyWebhook(rawBody: string, hmacHeader: string): boolean {
   return hash === hmacHeader;
 }
 
-const apiUrl = process.env.WWEX_API_URL || "https://auth.staging-wwex.com";
+const apiUrl = "https://auth.wwex.com";
+
 const clientId =
-  process.env.WWEX_CLIENT_ID || "8h94TCp0N6fg09ipP3yyJmfPPv5l1mCD";
+  process.env.WWEX_CLIENT_ID || "TDWIzAaXFdcFtrwDg5Wo6ppnLYZdsGTm";
 const clientSecret =
   process.env.WWEX_CLIENT_SECRET ||
-  "2xVfUgUZfR_I56yuR8tv_Q_G3IQiEqV-sNV9cf90QhjLKGN-VHAaF24VPL1ulKzQ";
+  "V547FsGpINlNRj8QilFfkv-cyAUE136U8zshl7SkgltllPTO5iaeDnm-Ks-Ny2s7";
 
 let accessToken: string | null = null;
 let tokenExpiry = 0;
@@ -54,7 +51,7 @@ const getAccessToken = async () => {
       grant_type: "client_credentials",
       client_id: clientId,
       client_secret: clientSecret,
-      audience: "staging-wwex-apig",
+      audience: "wwex-apig",
     }),
     {
       headers: {
@@ -79,8 +76,7 @@ interface GeocodingResult {
 }
 
 const geocodingCache = new Map<string, GeocodingResult>();
-const FIXED_PALLET_HEIGHT_IN = 48;
-// const FIXED_PALLET_HEIGHT_IN = 36;
+const FIXED_PALLET_HEIGHT_IN = 30;
 
 // =====================================================
 // GEOCODING FUNCTIONS
@@ -443,8 +439,11 @@ function calculateDensityAndClass(
   const volume = (length * width * height) / 1728;
   if (volume === 0) return { density: 0, freightClass: "70" };
 
+  console.log("volume===================>", volume);
+
   const density = weight / volume;
 
+  console.log("density============================>", density);
   let freightClass = "500";
   if (density >= 50) freightClass = "50";
   else if (density >= 35) freightClass = "55";
@@ -576,6 +575,14 @@ function getDeliveryDate(transitDays: number): Date {
   return date;
 }
 
+function hasAccessorials(offer: any): boolean {
+  const product = offer?.offeredProductList?.[0];
+  return (
+    Array.isArray(product?.accessorialChargeList) &&
+    product.accessorialChargeList.length > 0
+  );
+}
+
 // =====================================================
 // MAIN POST FUNCTION
 // =====================================================
@@ -583,6 +590,8 @@ function getDeliveryDate(transitDays: number): Date {
 export async function POST(request: NextRequest) {
   console.log("🟢 Speedship API - Exact Address Distance-Based Routing v7.0");
   const startTime = Date.now();
+
+  let res;
 
   try {
     const rawBody = await request.text();
@@ -626,6 +635,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ rates: [] });
     }
 
+    function isShippingProtection(item: any): boolean {
+      const title = `${item.name || ""}`.toLowerCase();
+      return title.includes("shipping protection");
+    }
+
     // =====================================================
     // GROUP ITEMS BY CLOSEST WAREHOUSE (USING EXACT ADDRESS)
     // =====================================================
@@ -640,13 +654,19 @@ export async function POST(request: NextRequest) {
     const itemsByOrigin = new Map<string, ItemGroup>();
 
     for (const item of items) {
+      // 🚫 SKIP SHIPPING PROTECTION COMPLETELY
+      if (isShippingProtection(item)) {
+        console.log(
+          `🛡️ Skipping Shipping Protection from routing: ${item.name}`,
+        );
+        continue;
+      }
+
       const isEmptyProperties =
         !item.properties || Object.keys(item.properties).length === 0;
 
       let perItemWeight = 0;
       if (!isEmptyProperties && item.properties?.Weight) {
-        // perItemWeight = Number(item.properties.Weight);
-
         const width = parseFloat(item.properties?.["Width (ft)"] || 0);
         const length = parseFloat(item.properties?.["Length (ft)"] || 0);
 
@@ -745,8 +765,6 @@ export async function POST(request: NextRequest) {
             service_code: "FREIGHT_OVERWEIGHT",
             total_price: "0",
             currency: "USD",
-            // description:
-            //   "Total shipment weight exceeds 20,000 lbs. Please contact support for a custom freight quote.",
             description:
               "This order exceeds the maximum freight weight limit. Please contact support to arrange a custom shipping quote.",
           },
@@ -785,7 +803,6 @@ export async function POST(request: NextRequest) {
       const optimizedConfig = optimizeMultiPalletConfiguration(finalWeight);
       const palletsNeeded = optimizedConfig.palletsNeeded;
       const weightPerPallet = optimizedConfig.weightPerPallet;
-      // const optimizedHeight = optimizedConfig.height;
       const optimizedHeight = FIXED_PALLET_HEIGHT_IN;
       const freightClass = optimizedConfig.freightClass;
 
@@ -823,7 +840,7 @@ export async function POST(request: NextRequest) {
           weight: { value: Math.ceil(palletWeight), unit: "LB" },
           shippedItemList: [
             {
-              commodityClass: palletClass,
+              commodityClass: "55",
               isHazMat: false,
               weight: { value: Math.ceil(palletWeight), unit: "LB" },
             },
@@ -857,6 +874,7 @@ export async function POST(request: NextRequest) {
                   ],
                 },
                 locationType: "COMMERCIAL",
+                // locationType: "RESIDENTIAL",
               },
               destinationAddress: {
                 address: {
@@ -876,13 +894,15 @@ export async function POST(request: NextRequest) {
                     },
                   ],
                 },
-                locationType: "COMMERCIAL",
+                // locationType: "COMMERCIAL",
+                locationType: "RESIDENTIAL",
               },
               totalWeight: { value: Math.ceil(finalWeight), unit: "LB" },
               description: `Full Truckload - ${palletsNeeded} pallets from ${group.origin.locality}`,
-              residentialDeliveryFlag: false,
+              residentialDeliveryFlag: true,
               residentialPickupFlag: false,
               liftgateDeliveryFlag: false,
+              // liftgateDeliveryFlag: true,
               liftgatePickupFlag: false,
               insideDeliveryFlag: false,
               insidePickupFlag: false,
@@ -909,6 +929,7 @@ export async function POST(request: NextRequest) {
               originAddress: {
                 address: {
                   ...group.origin,
+
                   companyName: rate.origin?.company || "",
                   phone: rate.origin?.phone || "",
                   contactList: [
@@ -940,21 +961,21 @@ export async function POST(request: NextRequest) {
                     },
                   ],
                 },
-                locationType: "COMMERCIAL",
+                locationType: "RESIDENTIAL",
               },
               handlingUnitList: handlingUnitList,
               totalHandlingUnitCount: palletsNeeded,
               totalWeight: { value: Math.ceil(finalWeight), unit: "LB" },
-              description: `Freight from ${group.origin.locality}, ${group.origin.region}`,
               returnLabelFlag: false,
-              residentialDeliveryFlag: false,
+              residentialDeliveryFlag: true,
               residentialPickupFlag: false,
               isSignatureRequired: false,
+              appointmentDeliveryFlag: false,
               holdAtTerminalFlag: false,
               insideDeliveryFlag: false,
               insidePickupFlag: false,
               carrierTerminalPickupFlag: false,
-              liftgateDeliveryFlag: false,
+              liftgateDeliveryFlag: true,
               liftgatePickupFlag: false,
               notifyBeforeDeliveryFlag: false,
               protectionFromColdFlag: false,
@@ -985,14 +1006,14 @@ export async function POST(request: NextRequest) {
 
       try {
         const response = await axios.post(
-          "https://speedship.staging-wwex.com/svc/shopFlow",
+          "https://www.speedship.com/svc/shopFlow",
           speedshipRequest,
           {
             headers: {
               Authorization: `Bearer ${token}`,
               "Content-Type": "application/json",
             },
-            timeout: 20000,
+            timeout: 40000,
           },
         );
 
@@ -1000,6 +1021,8 @@ export async function POST(request: NextRequest) {
         console.log(
           `🟢 WWEX API response time for ${originKey}: ${speedshipResponseTime}ms`,
         );
+
+        res = response.data;
 
         const offerList = response.data?.response?.offerList || [];
 
@@ -1095,7 +1118,13 @@ export async function POST(request: NextRequest) {
     // COMBINE ALL RATES
     // =====================================================
     if (allShipmentRates.length > 0) {
-      const totalRate = allShipmentRates.reduce((sum, r) => sum + r.rate, 0);
+      let totalRate = allShipmentRates.reduce((sum, r) => sum + r.rate, 0);
+      console.log("total rate===============================>", totalRate);
+      totalRate = totalRate * 1.06;
+      console.log(
+        "after 6% add total rate=======================================>",
+        totalRate,
+      );
       const maxTransitDays = Math.max(
         ...allShipmentRates.map((r) => r.transitDays),
       );
@@ -1115,39 +1144,42 @@ export async function POST(request: NextRequest) {
       console.log(`   Total Pallets: ${totalPallets}`);
       console.log(`   Origins: ${origins.join(" + ")}`);
 
-      const description =
-        allShipmentRates.length === 1
-          ? `${maxTransitDays} business days (${totalPallets} pallet${
-              totalPallets > 1 ? "s" : ""
-            } from ${origins[0]})`
-          : `${maxTransitDays} business days (${
-              allShipmentRates.length
-            } shipments: ${origins.join(" & ")})`;
+      const productionTimeText = "Production time: 7–14 business days.";
+
+      const shippingText = `Transit: 3-5 business days`;
+
+      const description = `${productionTimeText} ${shippingText}`;
+
+      // const description =
+      //   allShipmentRates.length === 1
+      //     ? `${maxTransitDays} business days (${totalPallets} pallet${
+      //         totalPallets > 1 ? "s" : ""
+      //       } from ${origins[0]})`
+      //     : `${maxTransitDays} business days (${
+      //         allShipmentRates.length
+      //       } shipments: ${origins.join(" & ")})`;
+
+      const formatDate = (d: Date) => d.toISOString().split("T")[0];
 
       rates.push({
-        service_name:
-          allShipmentRates.length === 1
-            ? `Speedship Freight - ${allShipmentRates[0].serviceLevel}`
-            : `Speedship Freight - Multi-Origin`,
-        service_code:
-          allShipmentRates.length === 1
-            ? "SPEEDSHIP_FREIGHT"
-            : "SPEEDSHIP_FREIGHT_MULTI",
-        total_price: (totalRate * 100).toString(),
+        service_name: "Speedship Freight",
+        service_code: "SPEEDSHIP_FREIGHT",
+        total_price: Math.round(totalRate * 100).toString() || "100",
         currency: "USD",
-        // description,
-        min_delivery_date: getDeliveryDate(maxTransitDays + 7).toISOString(),
-        max_delivery_date: getDeliveryDate(maxTransitDays + 9).toISOString(),
+        description,
+        // min_delivery_date: formatDate(getDeliveryDate(maxTransitDays + 7)),
+        // max_delivery_date: formatDate(getDeliveryDate(maxTransitDays + 9)),
       });
+
+      console.log("rates========================>", rates);
 
       await logFinalShippingRate({
         requestId: "",
         combinedRate: totalRate,
         transitDays: maxTransitDays,
         destination: destination,
-        // allShipmentRates: allShipmentRates,
-        items:items
-      })
+        items: items,
+      });
 
       console.log("✅ Successfully created combined rate");
     } else {
@@ -1169,26 +1201,8 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // const totalProcessingTime = Date.now() - startTime;
-    // console.log(`\n🟢 Total processing time: ${totalProcessingTime}ms`);
-
-    // console.log("🟢 Calling FedEx API for split shipment...");
-    // const fedexClient = new FedExClient();
-    // const fedexStartTime = Date.now();
-
-    // const fedexResponse = await fedexClient.getSplitShipmentRate(rate);
-    // // const fedexResponse = await fedexClient.getAllServiceRates(rate);
-
-    // const fedexResponseTime = Date.now() - fedexStartTime;
-    // console.log(`🟢 FedEx API response time: ${fedexResponseTime}ms`);
-
-    // console.log(
-    //   "fedexResponse=======================================>",
-    //   fedexResponse
-    // );
-
-    // return NextResponse.json({ rates });
-    return NextResponse.json({ rates: [] });
+    return NextResponse.json({ rates });
+    // return NextResponse.json({ rates: [] });
   } catch (error: any) {
     console.error("🔴 Speedship Estimate Error:", error);
     await logError("SPEEDSHIP_ESTIMATE_ERROR", error.message, error.stack);
@@ -1197,27 +1211,6 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET() {
-  // return NextResponse.json({
-  //   status: "ok",
-  //   service: "Speedship Freight - Exact Address Distance-Based Routing",
-  //   version: "7.0.0",
-  //   features: [
-  //     "✅ Exact address geocoding for precise distance calculation",
-  //     "✅ Automatically routes to closest available warehouse",
-  //     "✅ Falls back to state coordinates if geocoding fails",
-  //     "✅ Supports accessories (tape, cleaner, adhesive)",
-  //     "✅ Multi-origin shipments combined into single rate",
-  //     "✅ Optimized freight cost calculation",
-  //     "✅ Geocoding result caching for performance",
-  //   ],
-  //   origins: {
-  //     RLX: "Pilot Mountain, NC (East Coast)",
-  //     ARC_AZ: "Surprise, AZ (West Coast)",
-  //     ARC_WI: "Cudahy, WI (Midwest)",
-  //   },
-  //   routing_logic:
-  //     "Geocodes exact destination address, calculates distance to warehouses, selects closest available warehouse",
-  // });
   try {
     const rate = await getLatestWWEXRate();
 
