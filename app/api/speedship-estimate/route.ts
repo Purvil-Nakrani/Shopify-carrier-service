@@ -831,7 +831,7 @@ export async function POST(request: NextRequest) {
         handlingUnitList.push({
           quantity: 1,
           packagingType: "PLT",
-          isStackable: true,
+          isStackable: false,
           billedDimension: {
             length: { value: 48, unit: "IN" },
             width: { value: 40, unit: "IN" },
@@ -840,7 +840,7 @@ export async function POST(request: NextRequest) {
           weight: { value: Math.ceil(palletWeight), unit: "LB" },
           shippedItemList: [
             {
-              commodityClass: "55",
+              commodityClass: palletClass,
               isHazMat: false,
               weight: { value: Math.ceil(palletWeight), unit: "LB" },
             },
@@ -977,7 +977,7 @@ export async function POST(request: NextRequest) {
               carrierTerminalPickupFlag: false,
               liftgateDeliveryFlag: true,
               liftgatePickupFlag: false,
-              notifyBeforeDeliveryFlag: false,
+              notifyBeforeDeliveryFlag: true,
               protectionFromColdFlag: false,
               insuredCommodityCategory: "400",
               totalDeclaredValue: { value: "0", unit: "USD" },
