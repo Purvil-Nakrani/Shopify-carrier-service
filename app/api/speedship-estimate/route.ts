@@ -418,17 +418,17 @@ function generateCacheKey(
   return `speedship-${origin}-${destination}-${weightBucket}`;
 }
 
-type FreightMode = "LTL" | "FTL";
+// type FreightMode = "LTL" | "FTL";
 
-function determineFreightMode(
-  totalWeight: number,
-  palletsNeeded: number,
-): FreightMode {
-  if (totalWeight > 20000 || palletsNeeded >= 8) {
-    return "FTL";
-  }
-  return "LTL";
-}
+// function determineFreightMode(
+//   totalWeight: number,
+//   palletsNeeded: number,
+// ): FreightMode {
+//   if (totalWeight > 20000 || palletsNeeded >= 8) {
+//     return "FTL";
+//   }
+//   return "LTL";
+// }
 
 function calculateDensityAndClass(
   weight: number,
@@ -445,24 +445,26 @@ function calculateDensityAndClass(
 
   console.log("density============================>", density);
   let freightClass = "500";
-  if (density >= 50) freightClass = "50";
-  else if (density >= 35) freightClass = "55";
-  else if (density >= 30) freightClass = "60";
-  else if (density >= 22.5) freightClass = "65";
-  else if (density >= 15) freightClass = "70";
-  else if (density >= 13.5) freightClass = "77.5";
-  else if (density >= 12) freightClass = "85";
-  else if (density >= 10.5) freightClass = "92.5";
-  else if (density >= 9) freightClass = "100";
-  else if (density >= 8) freightClass = "110";
-  else if (density >= 7) freightClass = "125";
-  else if (density >= 6) freightClass = "150";
-  else if (density >= 5) freightClass = "175";
-  else if (density >= 4) freightClass = "200";
-  else if (density >= 3) freightClass = "250";
-  else if (density >= 2) freightClass = "300";
-  else if (density >= 1) freightClass = "400";
-
+  // if (density >= 50) freightClass = "50";
+  // else if (density >= 35) freightClass = "55";
+  // else if (density >= 30) freightClass = "60";
+  // else if (density >= 22.5) freightClass = "65";
+  // else if (density >= 15) freightClass = "70";
+  // else if (density >= 13.5) freightClass = "77.5";
+  // else if (density >= 12) freightClass = "85";
+  // else if (density >= 10.5) freightClass = "92.5";
+  // else if (density >= 9) freightClass = "100";
+  // else if (density >= 8) freightClass = "110";
+  // else if (density >= 7) freightClass = "125";
+  // else if (density >= 6) freightClass = "150";
+  // else if (density >= 5) freightClass = "175";
+  // else if (density >= 4) freightClass = "200";
+  // else if (density >= 3) freightClass = "250";
+  // else if (density >= 2) freightClass = "300";
+  // else if (density >= 1) freightClass = "400";
+  if (density >= 30) freightClass = "60";
+  else if (density >= 22.5) freightClass = "70";
+  else if (density < 22.5) freightClass = "77.5";
   return { density, freightClass };
 }
 
@@ -583,6 +585,263 @@ function hasAccessorials(offer: any): boolean {
   );
 }
 
+function isShippingProtection(item: any): boolean {
+  const title = `${item.name || ""}`.toLowerCase();
+  return title.includes("shipping protection");
+}
+
+// =====================================================
+// ITEM GROUP INTERFACE
+// =====================================================
+
+interface ItemGroup {
+  origin: (typeof ORIGIN_ADDRESSES)[keyof typeof ORIGIN_ADDRESSES];
+  originKey: string;
+  items: any[];
+  totalWeight: number;
+  perItemWeight: number;
+}
+
+// =====================================================
+// WAREHOUSE OPTIMIZATION LOGIC
+// =====================================================
+
+interface ItemWarehouseInfo {
+  item: any;
+  colorGroup: ColorGroup;
+  allowedWarehouses: Array<"RLX" | "ARC_AZ" | "ARC_WI">;
+  closestWarehouse: "RLX" | "ARC_AZ" | "ARC_WI";
+  perItemWeight: number;
+  itemQuantity: number;
+  totalItemWeight: number;
+}
+
+async function optimizeWarehouseSelection(
+  items: any[],
+  destinationAddress: {
+    address1?: string;
+    city?: string;
+    province?: string;
+    postal_code?: string;
+    country?: string;
+  },
+): Promise<Map<string, ItemGroup>> {
+  console.log("\n🔍 ========================================");
+  console.log("🔍 ANALYZING ORDER FOR WAREHOUSE OPTIMIZATION");
+  console.log("🔍 ========================================");
+
+  // Step 1: Gather warehouse info for all items
+  const itemWarehouseInfo: ItemWarehouseInfo[] = [];
+
+  for (const item of items) {
+    // Skip shipping protection
+    if (isShippingProtection(item)) {
+      console.log(`🛡️ Skipping Shipping Protection from routing: ${item.name}`);
+      continue;
+    }
+
+    // Calculate weight
+    const isEmptyProperties =
+      !item.properties || Object.keys(item.properties).length === 0;
+
+    let perItemWeight = 0;
+    if (!isEmptyProperties && item.properties?.Weight) {
+      const width = parseFloat(item.properties?.["Width (ft)"] || 0);
+      const length = parseFloat(item.properties?.["Length (ft)"] || 0);
+      const areaSqFT = Number(width * length);
+      const grams = Number(item.grams) || 0;
+      const perSqFTWeight = Number((grams / 453.592).toFixed(2));
+      perItemWeight = perSqFTWeight * areaSqFT;
+    } else {
+      const grams = Number(item.grams) || 0;
+      perItemWeight = Number((grams / 453.592).toFixed(2));
+    }
+
+    const itemQuantity = isEmptyProperties
+      ? item.quantity
+      : item.properties.Quantity || item.quantity;
+
+    const totalItemWeight = perItemWeight * itemQuantity;
+
+    // Detect color group and allowed warehouses
+    const colorGroup = getColorGroup(item);
+    const allowedWarehouses = COLOR_WAREHOUSE_MAP[colorGroup];
+    const closestWarehouse = await findClosestWarehouseExact(
+      allowedWarehouses,
+      destinationAddress,
+    );
+
+    itemWarehouseInfo.push({
+      item,
+      colorGroup,
+      allowedWarehouses,
+      closestWarehouse,
+      perItemWeight,
+      itemQuantity,
+      totalItemWeight,
+    });
+
+    console.log(`\n📦 Item: ${item.name}`);
+    console.log(`   🎨 Color Group: ${colorGroup}`);
+    console.log(`   🏭 Allowed Warehouses: [${allowedWarehouses.join(", ")}]`);
+    console.log(`   📍 Closest Warehouse: ${closestWarehouse}`);
+    console.log(`   ⚖️  Weight: ${totalItemWeight.toFixed(2)} lbs`);
+  }
+
+  // Step 2: Check if any items have exclusive warehouse requirements
+  const exclusiveWarehouseItems = itemWarehouseInfo.filter(
+    (info) => info.allowedWarehouses.length === 1,
+  );
+
+  if (exclusiveWarehouseItems.length > 0) {
+    console.log("\n⚠️  ========================================");
+    console.log("⚠️  EXCLUSIVE WAREHOUSE ITEMS DETECTED");
+    console.log("⚠️  ========================================");
+
+    exclusiveWarehouseItems.forEach((info) => {
+      console.log(
+        `   🔒 ${info.item.name}: ONLY at ${info.allowedWarehouses[0]}`,
+      );
+    });
+
+    // If we have exclusive items, check if consolidating makes sense
+    const exclusiveWarehouses = new Set(
+      exclusiveWarehouseItems.map((info) => info.allowedWarehouses[0]),
+    );
+
+    if (exclusiveWarehouses.size === 1) {
+      // All exclusive items are from the same warehouse
+      const exclusiveWarehouse = Array.from(exclusiveWarehouses)[0];
+
+      console.log(`\n💡 ========================================`);
+      console.log(`💡 CONSOLIDATION OPPORTUNITY DETECTED`);
+      console.log(`💡 ========================================`);
+      console.log(`   All exclusive items require: ${exclusiveWarehouse}`);
+
+      // Check if other items can also ship from this warehouse
+      const canAllShipFromExclusive = itemWarehouseInfo.every((info) =>
+        info.allowedWarehouses.includes(exclusiveWarehouse),
+      );
+
+      if (canAllShipFromExclusive) {
+        console.log(`   ✅ All items CAN ship from ${exclusiveWarehouse}`);
+
+        // Calculate cost benefit
+        const uniqueClosestWarehouses = new Set(
+          itemWarehouseInfo.map((info) => info.closestWarehouse),
+        );
+        const wouldHaveBeenSplit = uniqueClosestWarehouses.size > 1;
+
+        if (wouldHaveBeenSplit) {
+          console.log(`\n   💰 COST OPTIMIZATION ACTIVATED:`);
+          console.log(
+            `      Without optimization: ${uniqueClosestWarehouses.size} separate shipments`,
+          );
+          console.log(
+            `      ❌ Would ship from: ${Array.from(uniqueClosestWarehouses).join(", ")}`,
+          );
+          console.log(
+            `      ✅ Consolidating to: ${exclusiveWarehouse} (single shipment)`,
+          );
+          console.log(
+            `      💵 Benefit: Reduced split-shipment costs + single freight rate`,
+          );
+        }
+
+        // Consolidate all items to the exclusive warehouse
+        const itemsByOrigin = new Map<string, ItemGroup>();
+        const originAddress = ORIGIN_ADDRESSES[exclusiveWarehouse];
+
+        itemsByOrigin.set(exclusiveWarehouse, {
+          origin: originAddress,
+          originKey: exclusiveWarehouse,
+          items: [],
+          totalWeight: 0,
+          perItemWeight: 0,
+        });
+
+        const group = itemsByOrigin.get(exclusiveWarehouse)!;
+
+        for (const info of itemWarehouseInfo) {
+          group.items.push({
+            ...info.item,
+            perItemWeight: info.perItemWeight,
+            itemQuantity: info.itemQuantity,
+            totalItemWeight: info.totalItemWeight,
+          });
+          group.totalWeight += info.totalItemWeight;
+        }
+
+        console.log(`\n✅ ========================================`);
+        console.log(`✅ CONSOLIDATED SHIPMENT CREATED`);
+        console.log(`✅ ========================================`);
+        console.log(
+          `   📍 Warehouse: ${exclusiveWarehouse} (${originAddress.locality}, ${originAddress.region})`,
+        );
+        console.log(`   📦 Items: ${group.items.length}`);
+        console.log(`   ⚖️  Total Weight: ${group.totalWeight.toFixed(2)} lbs`);
+
+        return itemsByOrigin;
+      } else {
+        console.log(
+          `   ❌ Cannot consolidate: Some items not available at ${exclusiveWarehouse}`,
+        );
+      }
+    } else {
+      console.log(`\n   ⚠️  Multiple exclusive warehouses required:`);
+      console.log(`      ${Array.from(exclusiveWarehouses).join(", ")}`);
+      console.log(`   ❌ Cannot consolidate - items must ship separately`);
+    }
+  } else {
+    console.log("\n✅ No exclusive warehouse requirements detected");
+  }
+
+  // Step 3: Fallback to original closest warehouse logic
+  console.log("\n📍 ========================================");
+  console.log("📍 USING STANDARD CLOSEST WAREHOUSE ROUTING");
+  console.log("📍 ========================================");
+
+  const itemsByOrigin = new Map<string, ItemGroup>();
+
+  for (const info of itemWarehouseInfo) {
+    const selectedWarehouse = info.closestWarehouse;
+    const originAddress = ORIGIN_ADDRESSES[selectedWarehouse];
+
+    console.log(`   📦 ${info.item.name} → ${selectedWarehouse}`);
+
+    if (!itemsByOrigin.has(selectedWarehouse)) {
+      itemsByOrigin.set(selectedWarehouse, {
+        origin: originAddress,
+        originKey: selectedWarehouse,
+        items: [],
+        totalWeight: 0,
+        perItemWeight: 0,
+      });
+    }
+
+    const group = itemsByOrigin.get(selectedWarehouse)!;
+    group.items.push({
+      ...info.item,
+      perItemWeight: info.perItemWeight,
+      itemQuantity: info.itemQuantity,
+      totalItemWeight: info.totalItemWeight,
+    });
+    group.totalWeight += info.totalItemWeight;
+  }
+
+  console.log(`\n🟢 SHIPMENT SUMMARY:`);
+  itemsByOrigin.forEach((group, key) => {
+    console.log(
+      `   📍 ${key}: ${group.origin.locality}, ${group.origin.region}`,
+    );
+    console.log(
+      `      Items: ${group.items.length}, Weight: ${group.totalWeight.toFixed(2)} lbs`,
+    );
+  });
+
+  return itemsByOrigin;
+}
+
 // =====================================================
 // MAIN POST FUNCTION
 // =====================================================
@@ -643,102 +902,108 @@ export async function POST(request: NextRequest) {
     // =====================================================
     // GROUP ITEMS BY CLOSEST WAREHOUSE (USING EXACT ADDRESS)
     // =====================================================
-    interface ItemGroup {
-      origin: (typeof ORIGIN_ADDRESSES)[keyof typeof ORIGIN_ADDRESSES];
-      originKey: string;
-      items: any[];
-      totalWeight: number;
-      perItemWeight: number;
-    }
+    // interface ItemGroup {
+    //   origin: (typeof ORIGIN_ADDRESSES)[keyof typeof ORIGIN_ADDRESSES];
+    //   originKey: string;
+    //   items: any[];
+    //   totalWeight: number;
+    //   perItemWeight: number;
+    // }
 
-    const itemsByOrigin = new Map<string, ItemGroup>();
+    // const itemsByOrigin = new Map<string, ItemGroup>();
 
-    for (const item of items) {
-      // 🚫 SKIP SHIPPING PROTECTION COMPLETELY
-      if (isShippingProtection(item)) {
-        console.log(
-          `🛡️ Skipping Shipping Protection from routing: ${item.name}`,
-        );
-        continue;
-      }
+    // for (const item of items) {
+    //   // 🚫 SKIP SHIPPING PROTECTION COMPLETELY
+    //   if (isShippingProtection(item)) {
+    //     console.log(
+    //       `🛡️ Skipping Shipping Protection from routing: ${item.name}`,
+    //     );
+    //     continue;
+    //   }
 
-      const isEmptyProperties =
-        !item.properties || Object.keys(item.properties).length === 0;
+    //   const isEmptyProperties =
+    //     !item.properties || Object.keys(item.properties).length === 0;
 
-      let perItemWeight = 0;
-      if (!isEmptyProperties && item.properties?.Weight) {
-        const width = parseFloat(item.properties?.["Width (ft)"] || 0);
-        const length = parseFloat(item.properties?.["Length (ft)"] || 0);
+    //   let perItemWeight = 0;
+    //   if (!isEmptyProperties && item.properties?.Weight) {
+    //     const width = parseFloat(item.properties?.["Width (ft)"] || 0);
+    //     const length = parseFloat(item.properties?.["Length (ft)"] || 0);
 
-        const areaSqFT = Number(width * length);
+    //     const areaSqFT = Number(width * length);
 
-        const grams = Number(item.grams) || 0;
-        const perSqFTWeight = Number((grams / 453.592).toFixed(2));
-        perItemWeight = perSqFTWeight * areaSqFT;
-      } else {
-        const grams = Number(item.grams) || 0;
-        perItemWeight = Number((grams / 453.592).toFixed(2));
-      }
+    //     const grams = Number(item.grams) || 0;
+    //     const perSqFTWeight = Number((grams / 453.592).toFixed(2));
+    //     perItemWeight = perSqFTWeight * areaSqFT;
+    //   } else {
+    //     const grams = Number(item.grams) || 0;
+    //     perItemWeight = Number((grams / 453.592).toFixed(2));
+    //   }
 
-      const itemQuantity = isEmptyProperties
-        ? item.quantity
-        : item.properties.Quantity || item.quantity;
+    //   const itemQuantity = isEmptyProperties
+    //     ? item.quantity
+    //     : item.properties.Quantity || item.quantity;
 
-      // STEP 1: Detect color group
-      const colorGroup = getColorGroup(item);
+    //   // STEP 1: Detect color group
+    //   const colorGroup = getColorGroup(item);
 
-      // STEP 2: Allowed warehouses by color
-      const allowedWarehouses = COLOR_WAREHOUSE_MAP[colorGroup];
+    //   // STEP 2: Allowed warehouses by color
+    //   const allowedWarehouses = COLOR_WAREHOUSE_MAP[colorGroup];
 
-      // STEP 3: Pick closest warehouse using EXACT ADDRESS
-      const selectedWarehouse = await findClosestWarehouseExact(
-        allowedWarehouses,
-        destination,
-      );
+    //   // STEP 3: Pick closest warehouse using EXACT ADDRESS
+    //   const selectedWarehouse = await findClosestWarehouseExact(
+    //     allowedWarehouses,
+    //     destination,
+    //   );
 
-      // // STEP 4: Origin address
-      const originAddress = ORIGIN_ADDRESSES[selectedWarehouse];
+    //   // // STEP 4: Origin address
+    //   const originAddress = ORIGIN_ADDRESSES[selectedWarehouse];
 
-      console.log(`\n📦 Item: ${item.name}`);
-      console.log(`   🎨 Color Group: ${colorGroup}`);
-      console.log(
-        `   🏭 Selected Warehouse: ${selectedWarehouse} (${originAddress.locality}, ${originAddress.region})`,
-      );
+    //   console.log(`\n📦 Item: ${item.name}`);
+    //   console.log(`   🎨 Color Group: ${colorGroup}`);
+    //   console.log(
+    //     `   🏭 Selected Warehouse: ${selectedWarehouse} (${originAddress.locality}, ${originAddress.region})`,
+    //   );
 
-      // Group items by warehouse
-      if (!itemsByOrigin.has(selectedWarehouse)) {
-        itemsByOrigin.set(selectedWarehouse, {
-          origin: originAddress,
-          originKey: selectedWarehouse,
-          items: [],
-          totalWeight: 0,
-          perItemWeight: 0,
-        });
-      }
+    //   // Group items by warehouse
+    //   if (!itemsByOrigin.has(selectedWarehouse)) {
+    //     itemsByOrigin.set(selectedWarehouse, {
+    //       origin: originAddress,
+    //       originKey: selectedWarehouse,
+    //       items: [],
+    //       totalWeight: 0,
+    //       perItemWeight: 0,
+    //     });
+    //   }
 
-      const group = itemsByOrigin.get(selectedWarehouse)!;
-      const totalItemWeight = perItemWeight * itemQuantity;
+    //   const group = itemsByOrigin.get(selectedWarehouse)!;
+    //   const totalItemWeight = perItemWeight * itemQuantity;
 
-      group.items.push({
-        ...item,
-        perItemWeight,
-        itemQuantity,
-        totalItemWeight,
-      });
-      group.totalWeight += totalItemWeight;
-    }
+    //   group.items.push({
+    //     ...item,
+    //     perItemWeight,
+    //     itemQuantity,
+    //     totalItemWeight,
+    //   });
+    //   group.totalWeight += totalItemWeight;
+    // }
 
-    console.log(`\n🟢 SHIPMENT SUMMARY:`);
-    itemsByOrigin.forEach((group, key) => {
-      console.log(
-        `   📍 ${key}: ${group.origin.locality}, ${group.origin.region}`,
-      );
-      console.log(
-        `      Items: ${
-          group.items.length
-        }, Weight: ${group.totalWeight.toFixed(2)} lbs`,
-      );
-    });
+    // console.log(`\n🟢 SHIPMENT SUMMARY:`);
+    // itemsByOrigin.forEach((group, key) => {
+    //   console.log(
+    //     `   📍 ${key}: ${group.origin.locality}, ${group.origin.region}`,
+    //   );
+    //   console.log(
+    //     `      Items: ${
+    //       group.items.length
+    //     }, Weight: ${group.totalWeight.toFixed(2)} lbs`,
+    //   );
+    // });
+
+    // =====================================================
+    // OPTIMIZED WAREHOUSE SELECTION
+    // =====================================================
+    
+    const itemsByOrigin = await optimizeWarehouseSelection(items, destination);
 
     // Log request to database
     const totalWeightForLog = Array.from(itemsByOrigin.values()).reduce(
@@ -806,12 +1071,12 @@ export async function POST(request: NextRequest) {
       const optimizedHeight = FIXED_PALLET_HEIGHT_IN;
       const freightClass = optimizedConfig.freightClass;
 
-      const freightMode = determineFreightMode(finalWeight, palletsNeeded);
+      // const freightMode = determineFreightMode(finalWeight, palletsNeeded);
 
       console.log("🚚 FREIGHT MODE DECISION:");
       console.log(`   Total Weight: ${finalWeight} lbs`);
       console.log(`   Pallets: ${palletsNeeded}`);
-      console.log(`   Selected Mode: ${freightMode}`);
+      // console.log(`   Selected Mode: ${freightMode}`);
 
       // Build handling units
       const handlingUnitList = [];
@@ -837,155 +1102,109 @@ export async function POST(request: NextRequest) {
             width: { value: 40, unit: "IN" },
             height: { value: optimizedHeight, unit: "IN" },
           },
-          weight: { value: Math.ceil(palletWeight), unit: "LB" },
+          // weight: { value: Math.ceil(palletWeight), unit: "LB" },
+          weight: { value: palletWeight, unit: "LB" },
           shippedItemList: [
             {
               commodityClass: palletClass,
               isHazMat: false,
-              weight: { value: Math.ceil(palletWeight), unit: "LB" },
+              // weight: { value: Math.ceil(palletWeight), unit: "LB" },
+              weight: { value: palletWeight, unit: "LB" },
             },
           ],
         });
       }
 
       // Build WWEX request
-      let speedshipRequest;
-      if (freightMode === "FTL") {
-        speedshipRequest = {
-          request: {
-            productType: "FTL",
-            shipment: {
-              shipmentDate: new Date()
-                .toISOString()
-                .slice(0, 19)
-                .replace("T", " "),
-              originAddress: {
-                address: {
-                  ...group.origin,
-                  companyName: rate.origin?.company || "",
-                  phone: rate.origin?.phone || "",
-                  contactList: [
-                    {
-                      firstName: rate.origin?.first_name || "",
-                      lastName: rate.origin?.last_name || "",
-                      phone: rate.origin?.phone || "",
-                      contactType: "SENDER",
-                    },
-                  ],
-                },
-                locationType: "COMMERCIAL",
-                // locationType: "RESIDENTIAL",
-              },
-              destinationAddress: {
-                address: {
-                  addressLineList: [destination.address1 || ""],
-                  locality: destination.city || "",
-                  region: destination.province || "",
-                  postalCode: destination.postal_code || "",
-                  countryCode: "US",
-                  companyName: destination.company || "",
-                  phone: destination.phone || "",
-                  contactList: [
-                    {
-                      firstName: destination.first_name || "",
-                      lastName: destination.last_name || "",
-                      phone: destination.phone || "",
-                      contactType: "RECEIVER",
-                    },
-                  ],
-                },
-                // locationType: "COMMERCIAL",
-                locationType: "RESIDENTIAL",
-              },
-              totalWeight: { value: Math.ceil(finalWeight), unit: "LB" },
-              description: `Full Truckload - ${palletsNeeded} pallets from ${group.origin.locality}`,
-              residentialDeliveryFlag: true,
-              residentialPickupFlag: false,
-              liftgateDeliveryFlag: false,
-              // liftgateDeliveryFlag: true,
-              liftgatePickupFlag: false,
-              insideDeliveryFlag: false,
-              insidePickupFlag: false,
-              holdAtTerminalFlag: false,
-              notifyBeforeDeliveryFlag: false,
-              carrierTerminalPickupFlag: false,
-              protectionFromColdFlag: false,
-              isSignatureRequired: false,
-              insuredCommodityCategory: "400",
-              totalDeclaredValue: { value: "0", unit: "USD" },
-            },
-          },
-          correlationId: `${requestId}-${originKey}`,
-        };
-      } else {
-        speedshipRequest = {
-          request: {
-            productType: "LTL",
-            shipment: {
-              shipmentDate: new Date()
-                .toISOString()
-                .slice(0, 19)
-                .replace("T", " "),
-              originAddress: {
-                address: {
-                  ...group.origin,
+      const speedshipRequest = {
+        request: {
+          productType: "LTL",
+          shipment: {
+            shipmentDate: new Date()
+              .toISOString()
+              .slice(0, 19)
+              .replace("T", " "),
+            originAddress: {
+              address: {
+                ...group.origin,
 
-                  companyName: rate.origin?.company || "",
-                  phone: rate.origin?.phone || "",
-                  contactList: [
-                    {
-                      firstName: rate.origin?.first_name || "",
-                      lastName: rate.origin?.last_name || "",
-                      phone: rate.origin?.phone || "",
-                      contactType: "SENDER",
-                    },
-                  ],
-                },
-                locationType: "COMMERCIAL",
+                //------------ RLX ----------------
+                // addressLineList: ["312 East 52 Bypass"],
+                // locality: "Pilot Mountain",
+                // region: "NC",
+                // postalCode: "27041",
+                // countryCode: "US",
+
+                //--------- ARC AZ --------------------
+                // addressLineList: ["11701 North 132nd Avenue suite 100"],
+                // locality: "Surprise",
+                // region: "AZ",
+                // postalCode: "85379",
+                // countryCode: "US",
+
+                //---------- ARC WI ------------------------
+                // addressLineList: ["2025 East Norse Avenue"],
+                // locality: "Cudahy",
+                // region: "WI",
+                // postalCode: "53110",
+                // countryCode: "US",
+
+                companyName: rate.origin?.company || "",
+                phone: rate.origin?.phone || "",
+                contactList: [
+                  {
+                    firstName: rate.origin?.first_name || "",
+                    lastName: rate.origin?.last_name || "",
+                    phone: rate.origin?.phone || "",
+                    contactType: "SENDER",
+                  },
+                ],
               },
-              destinationAddress: {
-                address: {
-                  addressLineList: [destination.address1 || ""],
-                  locality: destination.city || "",
-                  region: destination.province || "",
-                  postalCode: destination.postal_code || "",
-                  countryCode: "US",
-                  companyName: destination.company || "",
-                  phone: destination.phone || "",
-                  contactList: [
-                    {
-                      firstName: destination.first_name || "",
-                      lastName: destination.last_name || "",
-                      phone: destination.phone || "",
-                      contactType: "RECEIVER",
-                    },
-                  ],
-                },
-                locationType: "RESIDENTIAL",
-              },
-              handlingUnitList: handlingUnitList,
-              totalHandlingUnitCount: palletsNeeded,
-              totalWeight: { value: Math.ceil(finalWeight), unit: "LB" },
-              returnLabelFlag: false,
-              residentialDeliveryFlag: true,
-              residentialPickupFlag: false,
-              isSignatureRequired: false,
-              appointmentDeliveryFlag: false,
-              holdAtTerminalFlag: false,
-              insideDeliveryFlag: false,
-              insidePickupFlag: false,
-              carrierTerminalPickupFlag: false,
-              liftgateDeliveryFlag: true,
-              liftgatePickupFlag: false,
-              notifyBeforeDeliveryFlag: true,
-              protectionFromColdFlag: false,
-              insuredCommodityCategory: "400",
-              totalDeclaredValue: { value: "0", unit: "USD" },
+              locationType: "COMMERCIAL",
             },
+            destinationAddress: {
+              address: {
+                addressLineList: [destination.address1 || ""],
+                locality: destination.city || "",
+                region: destination.province || "",
+                postalCode: destination.postal_code || "",
+                countryCode: "US",
+                companyName: destination.company || "",
+                phone: destination.phone || "",
+                contactList: [
+                  {
+                    firstName: destination.first_name || "",
+                    lastName: destination.last_name || "",
+                    phone: destination.phone || "",
+                    contactType: "RECEIVER",
+                  },
+                ],
+              },
+              locationType: "RESIDENTIAL",
+            },
+            handlingUnitList: handlingUnitList,
+            totalHandlingUnitCount: palletsNeeded,
+            // totalWeight: { value: Math.ceil(finalWeight), unit: "LB" },
+            totalWeight: { value: finalWeight, unit: "LB" },
+            returnLabelFlag: false,
+            residentialDeliveryFlag: true,
+            residentialPickupFlag: false,
+            isSignatureRequired: false,
+            appointmentDeliveryFlag: false,
+            holdAtTerminalFlag: false,
+            insideDeliveryFlag: false,
+            insidePickupFlag: false,
+            carrierTerminalPickupFlag: false,
+            liftgateDeliveryFlag: true,
+            liftgatePickupFlag: false,
+            notifyBeforeDeliveryFlag: true,
+            protectionFromColdFlag: false,
+            insuredCommodityCategory: "400",
+            totalDeclaredValue: { value: "0", unit: "USD" },
           },
-          correlationId: `${requestId}-${originKey}`,
-        };
-      }
+        },
+        correlationId: `${requestId}-${originKey}`,
+      };
 
       console.log("💰 COST OPTIMIZATIONS APPLIED:");
       console.log(`   ✅ Optimized pallets: ${palletsNeeded}`);
@@ -1200,6 +1419,21 @@ export async function POST(request: NextRequest) {
         max_delivery_date: getDeliveryDate(9).toISOString(),
       });
     }
+
+    // console.log("🟢 Calling FedEx API for split shipment...");
+    // const fedexClient = new FedExClient();
+    // const fedexStartTime = Date.now();
+
+    // const fedexResponse = await fedexClient.getSplitShipmentRate(rate);
+    // // const fedexResponse = await fedexClient.getAllServiceRates(rate);
+
+    // const fedexResponseTime = Date.now() - fedexStartTime;
+    // console.log(`🟢 FedEx API response time: ${fedexResponseTime}ms`);
+
+    // console.log(
+    //   "fedexResponse=======================================>",
+    //   fedexResponse,
+    // );
 
     return NextResponse.json({ rates });
     // return NextResponse.json({ rates: [] });
