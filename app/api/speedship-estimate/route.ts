@@ -2849,97 +2849,97 @@ export async function POST(request: NextRequest) {
     // }
 
     // ==========================================================================================
-    // if (shouldCallFedEx) {
-    //   try {
-    //     // PRE-PROCESS ALL PACKAGES ONCE (before any API calls)
-    //     const packagesByOrigin = await preprocessFedExPackages(itemsByOrigin);
+    if (shouldCallFedEx) {
+      try {
+        // PRE-PROCESS ALL PACKAGES ONCE (before any API calls)
+        const packagesByOrigin = await preprocessFedExPackages(itemsByOrigin);
 
-    //     // Now call FedEx API for EACH warehouse origin with pre-processed packages
-    //     const fedexPromises = Array.from(itemsByOrigin.entries()).map(
-    //       ([originKey, group]) => {
-    //         return (async () => {
-    //           try {
-    //             console.log(
-    //               `\n🟢 Calling FedEx API for origin: ${originKey}...`,
-    //             );
-    //             console.log(
-    //               `   📍 ${group.origin.locality}, ${group.origin.region}`,
-    //             );
-    //             console.log(
-    //               `   ⚖️  Weight: ${group.totalWeight.toFixed(2)} lbs`,
-    //             );
+        // Now call FedEx API for EACH warehouse origin with pre-processed packages
+        const fedexPromises = Array.from(itemsByOrigin.entries()).map(
+          ([originKey, group]) => {
+            return (async () => {
+              try {
+                console.log(
+                  `\n🟢 Calling FedEx API for origin: ${originKey}...`,
+                );
+                console.log(
+                  `   📍 ${group.origin.locality}, ${group.origin.region}`,
+                );
+                console.log(
+                  `   ⚖️  Weight: ${group.totalWeight.toFixed(2)} lbs`,
+                );
 
-    //             const fedexClient = new FedExClient();
+                const fedexClient = new FedExClient();
 
-    //             // Get pre-processed packages for this origin
-    //             const packages = packagesByOrigin.get(originKey);
-    //             if (!packages || packages.length === 0) {
-    //               console.warn(`⚠️ No packages for ${originKey}`);
-    //               return null;
-    //             }
+                // Get pre-processed packages for this origin
+                const packages = packagesByOrigin.get(originKey);
+                if (!packages || packages.length === 0) {
+                  console.warn(`⚠️ No packages for ${originKey}`);
+                  return null;
+                }
 
-    //             // Build shipper address for this origin
-    //             const shipperAddress = {
-    //               streetLines: [
-    //                 group.origin.addressLineList[0],
-    //                 group.origin.addressLineList[1],
-    //               ].filter(Boolean),
-    //               city: group.origin.locality,
-    //               stateOrProvinceCode: group.origin.region,
-    //               postalCode: group.origin.postalCode,
-    //               countryCode: group.origin.countryCode,
-    //               residential: false,
-    //             };
+                // Build shipper address for this origin
+                const shipperAddress = {
+                  streetLines: [
+                    group.origin.addressLineList[0],
+                    group.origin.addressLineList[1],
+                  ].filter(Boolean),
+                  city: group.origin.locality,
+                  stateOrProvinceCode: group.origin.region,
+                  postalCode: group.origin.postalCode,
+                  countryCode: group.origin.countryCode,
+                  residential: false,
+                };
 
-    //             // Call FedEx API with pre-processed packages (FAST - no heavy calculation)
-    //             const fedexRate = await Promise.race([
-    //               fedexClient.getRateForOrigin(
-    //                 destination,
-    //                 packages,
-    //                 shipperAddress,
-    //               ),
-    //               new Promise<null>((_, reject) =>
-    //                 setTimeout(
-    //                   () => reject(new Error(`FedEx ${originKey} timeout`)),
-    //                   10000,
-    //                 ),
-    //               ),
-    //             ]);
+                // Call FedEx API with pre-processed packages (FAST - no heavy calculation)
+                const fedexRate = await Promise.race([
+                  fedexClient.getRateForOrigin(
+                    destination,
+                    packages,
+                    shipperAddress,
+                  ),
+                  new Promise<null>((_, reject) =>
+                    setTimeout(
+                      () => reject(new Error(`FedEx ${originKey} timeout`)),
+                      10000,
+                    ),
+                  ),
+                ]);
 
-    //             if (fedexRate && fedexRate.rate) {
-    //               console.log(
-    //                 `🟣 FedEx rate for ${originKey}: $${fedexRate.rate}`,
-    //               );
-    //               return {
-    //                 service_code: "FEDEX_SMALL_PARCEL",
-    //                 originKey,
-    //                 rate: fedexRate.rate,
-    //                 transitDays: fedexRate.transitDays,
-    //                 serviceLevel: fedexRate.serviceLevel,
-    //                 packages: fedexRate.packages,
-    //                 origin: group.origin,
-    //               };
-    //             }
-    //             return null;
-    //           } catch (err: any) {
-    //             console.warn(
-    //               `⚠️ FedEx rate failed for ${originKey}:`,
-    //               err.message,
-    //             );
-    //             return null;
-    //           }
-    //         })();
-    //       },
-    //     );
+                if (fedexRate && fedexRate.rate) {
+                  console.log(
+                    `🟣 FedEx rate for ${originKey}: $${fedexRate.rate}`,
+                  );
+                  return {
+                    service_code: "FEDEX_SMALL_PARCEL",
+                    originKey,
+                    rate: fedexRate.rate,
+                    transitDays: fedexRate.transitDays,
+                    serviceLevel: fedexRate.serviceLevel,
+                    packages: fedexRate.packages,
+                    origin: group.origin,
+                  };
+                }
+                return null;
+              } catch (err: any) {
+                console.warn(
+                  `⚠️ FedEx rate failed for ${originKey}:`,
+                  err.message,
+                );
+                return null;
+              }
+            })();
+          },
+        );
 
-    //     ratePromises.push(...fedexPromises);
-    //   } catch (err: any) {
-    //     console.error("⚠️ FedEx pre-processing failed:", err.message);
-    //     // Continue without FedEx if pre-processing fails
-    //   }
-    // } else {
-    //   console.log("⏭️  Skipping FedEx API call (eligibility check failed)");
-    // }
+        ratePromises.push(...fedexPromises);
+      } catch (err: any) {
+        console.error("⚠️ FedEx pre-processing failed:", err.message);
+        // Continue without FedEx if pre-processing fails
+      }
+    } else {
+      console.log("⏭️  Skipping FedEx API call (eligibility check failed)");
+    }
 
     // 2. WWEX Rate Promises (one per origin)
     const wwexPromises = Array.from(itemsByOrigin.entries()).map(
