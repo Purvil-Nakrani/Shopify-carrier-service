@@ -1466,13 +1466,12 @@ import axios from "axios";
 import {
   logRateRequest,
   logWWEXResponse,
-  getCachedRate,
-  cacheRate,
   logError,
   getLatestWWEXRate,
   logFinalShippingRate,
 } from "@/lib/database";
 import FedExClient from "@/lib/fedex-client";
+import { getWWEXToken } from "@/lib/getWWEXToken";
 
 // Verify Shopify webhook signature
 function verifyShopifyWebhook(rawBody: string, hmacHeader: string): boolean {
@@ -1485,13 +1484,9 @@ function verifyShopifyWebhook(rawBody: string, hmacHeader: string): boolean {
   return hash === hmacHeader;
 }
 
-const apiUrl = "https://auth.wwex.com";
-
-const clientId =
-  process.env.WWEX_CLIENT_ID || "TDWIzAaXFdcFtrwDg5Wo6ppnLYZdsGTm";
-const clientSecret =
-  process.env.WWEX_CLIENT_SECRET ||
-  "V547FsGpINlNRj8QilFfkv-cyAUE136U8zshl7SkgltllPTO5iaeDnm-Ks-Ny2s7";
+const apiUrl = process.env.WWEX_AUTH_TOKEN_URL;
+const clientId = process.env.WWEX_CLIENT_ID;
+const clientSecret = process.env.WWEX_CLIENT_SECRET;
 
 let accessToken: string | null = null;
 let tokenExpiry = 0;
@@ -1609,7 +1604,7 @@ async function getCachedGeocode(address: {
   }
 
   // Add delay to respect Nominatim rate limits (1 req/sec)
-  await delay(1100);
+  // await delay(1100);
 
   const result = await geocodeAddress(address);
 
@@ -1915,15 +1910,6 @@ function calculateDensityAndClass(
   else if (density < 22.5) freightClass = "77.5";
 
   return { density, freightClass };
-}
-
-function optimizePalletHeight(weightPerPallet: number): number {
-  if (weightPerPallet >= 2200) return 30;
-  if (weightPerPallet >= 1800) return 36;
-  if (weightPerPallet >= 1400) return 42;
-  if (weightPerPallet >= 1000) return 48;
-  if (weightPerPallet >= 600) return 54;
-  return 60;
 }
 
 interface PalletConfig {
@@ -2331,15 +2317,308 @@ async function optimizeWarehouseSelection(
 }
 
 // =====================================================
-// MAIN POST FUNCTION - WITH TIMEOUT HANDLING
+// HELPER FUNCTION: GET WWEX RATE
+// =====================================================
+
+async function getWWEXRate(
+  originKey: string,
+  group: ItemGroup,
+  destination: any,
+  rate: any,
+  requestId: string,
+): Promise<any> {
+  try {
+    const finalWeight = group.totalWeight;
+    const optimizedConfig = optimizeMultiPalletConfiguration(finalWeight);
+    const palletsNeeded = optimizedConfig.palletsNeeded;
+    const weightPerPallet = optimizedConfig.weightPerPallet;
+    const optimizedHeight = FIXED_PALLET_HEIGHT_IN;
+
+    console.log(`\n🚚 ========================================`);
+    console.log(
+      `🚚 PROCESSING SHIPMENT FROM: ${group.origin.locality}, ${group.origin.region}`,
+    );
+    console.log(`🚚 Weight: ${finalWeight.toFixed(2)} lbs`);
+    console.log(`🚚 ========================================\n`);
+
+    // Build handling units
+    const handlingUnitList = [];
+    for (let i = 0; i < palletsNeeded; i++) {
+      const isLastPallet = i === palletsNeeded - 1;
+      const palletWeight = isLastPallet
+        ? finalWeight - weightPerPallet * (palletsNeeded - 1)
+        : weightPerPallet;
+
+      const { freightClass: palletClass } = calculateDensityAndClass(
+        palletWeight,
+        48,
+        40,
+        optimizedHeight,
+      );
+
+      handlingUnitList.push({
+        quantity: 1,
+        packagingType: "PLT",
+        isStackable: false,
+        billedDimension: {
+          length: { value: 48, unit: "IN" },
+          width: { value: 40, unit: "IN" },
+          height: { value: optimizedHeight, unit: "IN" },
+        },
+        weight: { value: palletWeight, unit: "LB" },
+        shippedItemList: [
+          {
+            commodityClass: palletClass,
+            isHazMat: false,
+            weight: { value: palletWeight, unit: "LB" },
+          },
+        ],
+      });
+    }
+
+    // Build WWEX request
+    const speedshipRequest = {
+      request: {
+        productType: "LTL",
+        shipment: {
+          shipmentDate: new Date().toISOString().slice(0, 19).replace("T", " "),
+          originAddress: {
+            address: {
+              ...group.origin,
+
+              //------------ RLX ----------------
+              // addressLineList: ["312 East 52 Bypass"],
+              // locality: "Pilot Mountain",
+              // region: "NC",
+              // postalCode: "27041",
+              // countryCode: "US",
+
+              //--------- ARC AZ --------------------
+              // addressLineList: ["11701 North 132nd Avenue suite 100"],
+              // locality: "Surprise",
+              // region: "AZ",
+              // postalCode: "85379",
+              // countryCode: "US",
+
+              //---------- ARC WI ------------------------
+              // addressLineList: ["2025 East Norse Avenue"],
+              // locality: "Cudahy",
+              // region: "WI",
+              // postalCode: "53110",
+              // countryCode: "US",
+              companyName: rate.origin?.company || "",
+              phone: rate.origin?.phone || "",
+              contactList: [
+                {
+                  firstName: rate.origin?.first_name || "",
+                  lastName: rate.origin?.last_name || "",
+                  phone: rate.origin?.phone || "",
+                  contactType: "SENDER",
+                },
+              ],
+            },
+            locationType: "COMMERCIAL",
+          },
+          destinationAddress: {
+            address: {
+              addressLineList: [destination.address1 || ""],
+              locality: destination.city || "",
+              region: destination.province || "",
+              postalCode: destination.postal_code || "",
+              countryCode: "US",
+              companyName: destination.company || "",
+              phone: destination.phone || "",
+              contactList: [
+                {
+                  firstName: destination.first_name || "",
+                  lastName: destination.last_name || "",
+                  phone: destination.phone || "",
+                  contactType: "RECEIVER",
+                },
+              ],
+            },
+            locationType: "RESIDENTIAL",
+          },
+          handlingUnitList: handlingUnitList,
+          totalHandlingUnitCount: palletsNeeded,
+          totalWeight: { value: finalWeight, unit: "LB" },
+          returnLabelFlag: false,
+          residentialDeliveryFlag: true,
+          residentialPickupFlag: false,
+          isSignatureRequired: false,
+          appointmentDeliveryFlag: false,
+          holdAtTerminalFlag: false,
+          insideDeliveryFlag: false,
+          insidePickupFlag: false,
+          carrierTerminalPickupFlag: false,
+          liftgateDeliveryFlag: true,
+          liftgatePickupFlag: false,
+          notifyBeforeDeliveryFlag: true,
+          protectionFromColdFlag: false,
+          insuredCommodityCategory: "400",
+          totalDeclaredValue: { value: "0", unit: "USD" },
+        },
+      },
+      correlationId: `${requestId}-${originKey}`,
+    };
+
+    console.log(
+      "\n🟢 WWEX Request:",
+      JSON.stringify(speedshipRequest, null, 2),
+    );
+
+    // const token = await getAccessToken();
+    const token = await getWWEXToken();
+
+    const speedshipStartTime = Date.now();
+
+    const response = await axios.post(
+      "https://www.speedship.com/svc/shopFlow",
+      speedshipRequest,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 10000, // 10 second timeout
+      },
+    );
+
+    const speedshipResponseTime = Date.now() - speedshipStartTime;
+    console.log(
+      `🟢 WWEX API response time for ${originKey}: ${speedshipResponseTime}ms`,
+    );
+
+    const offerList = response.data?.response?.offerList || [];
+
+    if (offerList.length === 0) {
+      console.warn(`⚠️ No offers from WWEX for ${originKey}`);
+      return null;
+    }
+
+    const sortedOffers = offerList
+      .filter((o: any) => o.totalOfferPrice?.value)
+      .sort(
+        (a: any, b: any) =>
+          Number(a.totalOfferPrice.value) - Number(b.totalOfferPrice.value),
+      );
+
+    const selectedOffer = sortedOffers[0];
+    if (!selectedOffer) {
+      console.warn(`⚠️ No valid offers for ${originKey}`);
+      return null;
+    }
+
+    const product = selectedOffer.offeredProductList[0];
+    const speedshipRate = Number(product.offerPrice.value);
+    const transitDays =
+      Number(product.shopRQShipment?.timeInTransit?.transitDays) || 5;
+    const serviceLevel =
+      product.shopRQShipment?.timeInTransit?.serviceLevel || "Freight";
+    const quoteId = `SPEEDSHIP-${Date.now()}`;
+
+    console.log(`\n💰 SELECTED RATE FOR ${originKey}:`);
+    console.log(`   Rate: ${speedshipRate.toFixed(2)}`);
+    console.log(`   Transit: ${transitDays} days`);
+    console.log(`   Service: ${serviceLevel}`);
+
+    // Log WWEX response
+    await logWWEXResponse({
+      requestId,
+      quoteId: quoteId,
+      rate: speedshipRate,
+      transitDays,
+      serviceLevel: `Speedship ${serviceLevel}`,
+      responseTimeMs: speedshipResponseTime,
+      rawResponse: response.data,
+    });
+
+    return {
+      origin: group.origin,
+      originKey,
+      rate: speedshipRate,
+      transitDays,
+      serviceLevel,
+      palletsNeeded,
+      weight: finalWeight,
+      offer: selectedOffer,
+      responseTimeMs: speedshipResponseTime,
+    };
+  } catch (error: any) {
+    console.error(`🔴 WWEX API Error for ${originKey}:`, error.message);
+    if (error.response) {
+      console.error("🔴 Response:", error.response.data);
+      console.error("🔴 Status:", error.response.status);
+    }
+    await logError(
+      `SPEEDSHIP_API_ERROR_${originKey}`,
+      error.message,
+      error.stack,
+      {
+        responseData: error.response?.data,
+        statusCode: error.response?.status,
+        origin: originKey,
+      },
+    );
+    return null;
+  }
+}
+
+// =====================================================
+// HELPER FUNCTION: PRE-PROCESS FEDEX PACKAGES PER ORIGIN
+// =====================================================
+
+async function preprocessFedExPackages(
+  itemsByOrigin: Map<string, ItemGroup>,
+): Promise<Map<string, any[]>> {
+  console.log("\n📦 ========================================");
+  console.log("📦 PRE-PROCESSING FEDEX PACKAGES (ONE TIME)");
+  console.log("📦 ========================================");
+
+  const fedexClient = new FedExClient();
+  const packagesByOrigin = new Map<string, any[]>();
+
+  for (const [originKey, group] of itemsByOrigin.entries()) {
+    console.log(`\n🔵 Processing items from ${originKey}...`);
+
+    // Convert items to Shopify format
+    const shopifyItems = group.items.map((item: any) => ({
+      name: item.name,
+      sku: item.sku || "",
+      quantity: item.itemQuantity || item.quantity || 1,
+      grams: item.grams || 0,
+      price: item.price || 0,
+      properties: item.properties || {},
+      product_id: item.product_id || 0,
+      variant_id: item.variant_id || 0,
+    }));
+
+    // Process items (heavy calculation done ONCE per origin)
+    const processedItems = fedexClient.processShopifyItemsPublic(shopifyItems);
+
+    // Consolidate packages (optimization done ONCE per origin)
+    const consolidatedPackages =
+      fedexClient.consolidatePackagesPublic(processedItems);
+
+    packagesByOrigin.set(originKey, consolidatedPackages);
+
+    console.log(
+      `   ✅ ${originKey}: ${consolidatedPackages.length} packages optimized`,
+    );
+  }
+
+  console.log("\n✅ All FedEx packages pre-processed successfully\n");
+
+  return packagesByOrigin;
+}
+
+// =====================================================
+// MAIN POST FUNCTION - WITH PARALLEL PROCESSING
 // =====================================================
 
 export async function POST(request: NextRequest) {
-  console.log("🟢 Speedship API - Optimized v8.0 (Fast First Call)");
+  console.log("🟢 Speedship API - Optimized v9.0 (Parallel Processing)");
   const startTime = Date.now();
-  const SHOPIFY_TIMEOUT = 9000; // 9 seconds to be safe (Shopify has 10s limit)
-
-  let res;
 
   try {
     const rawBody = await request.text();
@@ -2394,7 +2673,7 @@ export async function POST(request: NextRequest) {
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(
           () => reject(new Error("Warehouse optimization timeout")),
-          5000,
+          4000,
         ),
       );
 
@@ -2424,7 +2703,7 @@ export async function POST(request: NextRequest) {
     );
 
     // =====================================================
-    // HARD STOP: MAX FREIGHT WEIGHT CHECK (Shopify-safe)
+    // HARD STOP: MAX FREIGHT WEIGHT CHECK
     // =====================================================
     const MAX_FREIGHT_WEIGHT = 20000;
 
@@ -2462,21 +2741,250 @@ export async function POST(request: NextRequest) {
     });
 
     // =====================================================
-    // CHECK REMAINING TIME BEFORE WWEX CALLS
+    // CHECK FEDEX ELIGIBILITY
     // =====================================================
-    const elapsedTime = Date.now() - startTime;
-    if (elapsedTime > SHOPIFY_TIMEOUT - 2000) {
-      console.warn(
-        `⚠️ Approaching timeout (${elapsedTime}ms), returning estimate`,
+
+    let shouldCallFedEx = false;
+    let maxPerItemWeight = 0;
+
+    // Calculate max per item weight from all groups
+    for (const [originKey, group] of itemsByOrigin.entries()) {
+      for (const item of group.items) {
+        const perItemWeight = item.perItemWeight || 0;
+        if (perItemWeight > maxPerItemWeight) {
+          maxPerItemWeight = perItemWeight;
+        }
+      }
+    }
+
+    // Check FedEx eligibility criteria
+    if (maxPerItemWeight < 150 && totalWeightForLog <= 750) {
+      shouldCallFedEx = true;
+      console.log("\n✅ ========================================");
+      console.log("✅ FEDEX ELIGIBILITY CHECK: PASSED");
+      console.log("✅ ========================================");
+      console.log(
+        `   Max per item weight: ${maxPerItemWeight.toFixed(2)} lbs (< 150 lbs)`,
       );
+      console.log(
+        `   Total weight: ${totalWeightForLog.toFixed(2)} lbs (<= 750 lbs)`,
+      );
+      console.log(`   FedEx API will be called\n`);
+    } else {
+      console.log("\n⚠️  ========================================");
+      console.log("⚠️  FEDEX ELIGIBILITY CHECK: FAILED");
+      console.log("⚠️  ========================================");
+      console.log(
+        `   Max per item weight: ${maxPerItemWeight.toFixed(2)} lbs (must be < 150 lbs)`,
+      );
+      console.log(
+        `   Total weight: ${totalWeightForLog.toFixed(2)} lbs (must be <= 750 lbs)`,
+      );
+      console.log(`   FedEx API will NOT be called\n`);
+    }
+
+    // =====================================================
+    // PARALLEL PROCESSING: FedEx + WWEX
+    // =====================================================
+
+    const ratePromises: Promise<any>[] = [];
+
+    // 1. FedEx Rate Promise
+    // if (shouldCallFedEx) {
+    //   const fedexPromise = (async () => {
+    //     try {
+    //       console.log("🟢 Calling FedEx API for split shipment...");
+    //       const fedexClient = new FedExClient();
+
+    //       const modifiedRate = {
+    //         ...rate,
+    //         destination: rate.destination,
+    //         origins: Array.from(itemsByOrigin.entries()).map(
+    //           ([key, group]) => ({
+    //             warehouseKey: key,
+    //             address: {
+    //               address1: group.origin.addressLineList[0],
+    //               address2: group.origin.addressLineList[1] || "",
+    //               city: group.origin.locality,
+    //               province: group.origin.region,
+    //               postal_code: group.origin.postalCode,
+    //               country: group.origin.countryCode,
+    //               company: rate.origin?.company || "",
+    //               phone: rate.origin?.phone || "",
+    //             },
+    //             totalWeight: group.totalWeight,
+    //             items: group.items,
+    //           }),
+    //         ),
+    //         totalWeight: totalWeightForLog,
+    //       };
+
+    //       const fedexRate = await Promise.race([
+    //         fedexClient.getSplitShipmentRate(modifiedRate),
+    //         new Promise<null>((_, reject) =>
+    //           setTimeout(() => reject(new Error("FedEx timeout")), 6000),
+    //         ),
+    //       ]);
+
+    //       if (fedexRate && fedexRate.rate) {
+    //         console.log("🟣 FedEx rate added:", fedexRate.rate);
+    //         return {
+    //           service_name: `FedEx Small Parcel`,
+    //           service_code: `FEDEX_SMALL_PARCEL`,
+    //           total_price: Math.round(fedexRate.rate * 100).toString(),
+    //           currency: "USD",
+    //           description:
+    //             "Production time: 7–14 business days. Transit: 3-5 business days",
+    //         };
+    //       }
+    //       return null;
+    //     } catch (err: any) {
+    //       console.warn("⚠️ FedEx rate failed:", err.message);
+    //       return null;
+    //     }
+    //   })();
+    //   ratePromises.push(fedexPromise);
+    // } else {
+    //   console.log("⏭️  Skipping FedEx API call (eligibility check failed)");
+    // }
+
+    // ==========================================================================================
+    // if (shouldCallFedEx) {
+    //   try {
+    //     // PRE-PROCESS ALL PACKAGES ONCE (before any API calls)
+    //     const packagesByOrigin = await preprocessFedExPackages(itemsByOrigin);
+
+    //     // Now call FedEx API for EACH warehouse origin with pre-processed packages
+    //     const fedexPromises = Array.from(itemsByOrigin.entries()).map(
+    //       ([originKey, group]) => {
+    //         return (async () => {
+    //           try {
+    //             console.log(
+    //               `\n🟢 Calling FedEx API for origin: ${originKey}...`,
+    //             );
+    //             console.log(
+    //               `   📍 ${group.origin.locality}, ${group.origin.region}`,
+    //             );
+    //             console.log(
+    //               `   ⚖️  Weight: ${group.totalWeight.toFixed(2)} lbs`,
+    //             );
+
+    //             const fedexClient = new FedExClient();
+
+    //             // Get pre-processed packages for this origin
+    //             const packages = packagesByOrigin.get(originKey);
+    //             if (!packages || packages.length === 0) {
+    //               console.warn(`⚠️ No packages for ${originKey}`);
+    //               return null;
+    //             }
+
+    //             // Build shipper address for this origin
+    //             const shipperAddress = {
+    //               streetLines: [
+    //                 group.origin.addressLineList[0],
+    //                 group.origin.addressLineList[1],
+    //               ].filter(Boolean),
+    //               city: group.origin.locality,
+    //               stateOrProvinceCode: group.origin.region,
+    //               postalCode: group.origin.postalCode,
+    //               countryCode: group.origin.countryCode,
+    //               residential: false,
+    //             };
+
+    //             // Call FedEx API with pre-processed packages (FAST - no heavy calculation)
+    //             const fedexRate = await Promise.race([
+    //               fedexClient.getRateForOrigin(
+    //                 destination,
+    //                 packages,
+    //                 shipperAddress,
+    //               ),
+    //               new Promise<null>((_, reject) =>
+    //                 setTimeout(
+    //                   () => reject(new Error(`FedEx ${originKey} timeout`)),
+    //                   10000,
+    //                 ),
+    //               ),
+    //             ]);
+
+    //             if (fedexRate && fedexRate.rate) {
+    //               console.log(
+    //                 `🟣 FedEx rate for ${originKey}: $${fedexRate.rate}`,
+    //               );
+    //               return {
+    //                 service_code: "FEDEX_SMALL_PARCEL",
+    //                 originKey,
+    //                 rate: fedexRate.rate,
+    //                 transitDays: fedexRate.transitDays,
+    //                 serviceLevel: fedexRate.serviceLevel,
+    //                 packages: fedexRate.packages,
+    //                 origin: group.origin,
+    //               };
+    //             }
+    //             return null;
+    //           } catch (err: any) {
+    //             console.warn(
+    //               `⚠️ FedEx rate failed for ${originKey}:`,
+    //               err.message,
+    //             );
+    //             return null;
+    //           }
+    //         })();
+    //       },
+    //     );
+
+    //     ratePromises.push(...fedexPromises);
+    //   } catch (err: any) {
+    //     console.error("⚠️ FedEx pre-processing failed:", err.message);
+    //     // Continue without FedEx if pre-processing fails
+    //   }
+    // } else {
+    //   console.log("⏭️  Skipping FedEx API call (eligibility check failed)");
+    // }
+
+    // 2. WWEX Rate Promises (one per origin)
+    const wwexPromises = Array.from(itemsByOrigin.entries()).map(
+      ([originKey, group]) => {
+        return (async () => {
+          try {
+            const wwexRate = await Promise.race([
+              getWWEXRate(originKey, group, destination, rate, requestId),
+              new Promise<null>((_, reject) =>
+                setTimeout(() => reject(new Error("WWEX timeout")), 10000),
+              ),
+            ]);
+            return wwexRate;
+          } catch (err: any) {
+            console.warn(`⚠️ WWEX ${originKey} failed:`, err.message);
+            return null;
+          }
+        })();
+      },
+    );
+
+    ratePromises.push(...wwexPromises);
+
+    // =====================================================
+    // WAIT FOR ALL PROMISES WITH OVERALL TIMEOUT
+    // =====================================================
+
+    let allResults: PromiseSettledResult<any>[];
+
+    try {
+      allResults = await Promise.race([
+        Promise.allSettled(ratePromises),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Overall timeout")), 10000),
+        ),
+      ]);
+    } catch (timeoutError) {
+      console.warn("⚠️ Overall timeout reached, returning fallback");
+      const estimatedRate = 150 + totalWeightForLog * 0.5;
       return NextResponse.json({
         rates: [
           {
-            service_name: "Speedship Freight",
+            service_name: "Speedship Freight (Estimated)",
             service_code: "SPEEDSHIP_FREIGHT_ESTIMATED",
-            total_price: Math.round(
-              150 + totalWeightForLog * 0.5 * 100,
-            ).toString(),
+            total_price: Math.round(estimatedRate * 100).toString(),
             currency: "USD",
             description:
               "Production time: 7–14 business days. Transit: 3-5 business days",
@@ -2486,335 +2994,99 @@ export async function POST(request: NextRequest) {
     }
 
     // =====================================================
-    // PROCESS EACH ORIGIN SEPARATELY
+    // PROCESS RESULTS
     // =====================================================
-    const allShipmentRates: any[] = [];
-    const rates = [];
 
-    for (const [originKey, group] of itemsByOrigin.entries()) {
-      // Check time before each WWEX call
-      const currentElapsed = Date.now() - startTime;
-      if (currentElapsed > SHOPIFY_TIMEOUT - 3000) {
-        console.warn(`⚠️ Skipping ${originKey} due to time constraints`);
-        continue;
-      }
+    const rates: any[] = [];
+    const wwexRates: any[] = [];
+    const fedexRates: any[] = [];
 
-      const finalWeight = group.totalWeight;
-
-      console.log(`\n\n🚚 ========================================`);
-      console.log(
-        `🚚 PROCESSING SHIPMENT FROM: ${group.origin.locality}, ${group.origin.region}`,
-      );
-      console.log(`🚚 Weight: ${finalWeight.toFixed(2)} lbs`);
-      console.log(`🚚 ========================================\n`);
-
-      const optimizedConfig = optimizeMultiPalletConfiguration(finalWeight);
-      const palletsNeeded = optimizedConfig.palletsNeeded;
-      const weightPerPallet = optimizedConfig.weightPerPallet;
-      const optimizedHeight = FIXED_PALLET_HEIGHT_IN;
-      const freightClass = optimizedConfig.freightClass;
-
-      console.log("🚚 FREIGHT MODE DECISION:");
-      console.log(`   Total Weight: ${finalWeight} lbs`);
-      console.log(`   Pallets: ${palletsNeeded}`);
-
-      // Build handling units
-      const handlingUnitList = [];
-      for (let i = 0; i < palletsNeeded; i++) {
-        const isLastPallet = i === palletsNeeded - 1;
-        const palletWeight = isLastPallet
-          ? finalWeight - weightPerPallet * (palletsNeeded - 1)
-          : weightPerPallet;
-
-        const { freightClass: palletClass } = calculateDensityAndClass(
-          palletWeight,
-          48,
-          40,
-          optimizedHeight,
-        );
-
-        handlingUnitList.push({
-          quantity: 1,
-          packagingType: "PLT",
-          isStackable: false,
-          billedDimension: {
-            length: { value: 48, unit: "IN" },
-            width: { value: 40, unit: "IN" },
-            height: { value: optimizedHeight, unit: "IN" },
-          },
-          weight: { value: palletWeight, unit: "LB" },
-          shippedItemList: [
-            {
-              commodityClass: palletClass,
-              isHazMat: false,
-              weight: { value: palletWeight, unit: "LB" },
-            },
-          ],
-        });
-      }
-
-      // Build WWEX request
-      const speedshipRequest = {
-        request: {
-          productType: "LTL",
-          shipment: {
-            shipmentDate: new Date()
-              .toISOString()
-              .slice(0, 19)
-              .replace("T", " "),
-            originAddress: {
-              address: {
-                ...group.origin,
-
-                //------------ RLX ----------------
-                // addressLineList: ["312 East 52 Bypass"],
-                // locality: "Pilot Mountain",
-                // region: "NC",
-                // postalCode: "27041",
-                // countryCode: "US",
-
-                //--------- ARC AZ --------------------
-                // addressLineList: ["11701 North 132nd Avenue suite 100"],
-                // locality: "Surprise",
-                // region: "AZ",
-                // postalCode: "85379",
-                // countryCode: "US",
-
-                //---------- ARC WI ------------------------
-                // addressLineList: ["2025 East Norse Avenue"],
-                // locality: "Cudahy",
-                // region: "WI",
-                // postalCode: "53110",
-                // countryCode: "US",
-
-                companyName: rate.origin?.company || "",
-                phone: rate.origin?.phone || "",
-                contactList: [
-                  {
-                    firstName: rate.origin?.first_name || "",
-                    lastName: rate.origin?.last_name || "",
-                    phone: rate.origin?.phone || "",
-                    contactType: "SENDER",
-                  },
-                ],
-              },
-              locationType: "COMMERCIAL",
-            },
-            destinationAddress: {
-              address: {
-                addressLineList: [destination.address1 || ""],
-                locality: destination.city || "",
-                region: destination.province || "",
-                postalCode: destination.postal_code || "",
-                countryCode: "US",
-                companyName: destination.company || "",
-                phone: destination.phone || "",
-                contactList: [
-                  {
-                    firstName: destination.first_name || "",
-                    lastName: destination.last_name || "",
-                    phone: destination.phone || "",
-                    contactType: "RECEIVER",
-                  },
-                ],
-              },
-              locationType: "RESIDENTIAL",
-            },
-            handlingUnitList: handlingUnitList,
-            totalHandlingUnitCount: palletsNeeded,
-            totalWeight: { value: finalWeight, unit: "LB" },
-            returnLabelFlag: false,
-            residentialDeliveryFlag: true,
-            residentialPickupFlag: false,
-            isSignatureRequired: false,
-            appointmentDeliveryFlag: false,
-            holdAtTerminalFlag: false,
-            insideDeliveryFlag: false,
-            insidePickupFlag: false,
-            carrierTerminalPickupFlag: false,
-            liftgateDeliveryFlag: true,
-            liftgatePickupFlag: false,
-            notifyBeforeDeliveryFlag: true,
-            protectionFromColdFlag: false,
-            insuredCommodityCategory: "400",
-            totalDeclaredValue: { value: "0", unit: "USD" },
-          },
-        },
-        correlationId: `${requestId}-${originKey}`,
-      };
-
-      console.log("💰 COST OPTIMIZATIONS APPLIED:");
-      console.log(`   ✅ Optimized pallets: ${palletsNeeded}`);
-      console.log(`   ✅ Optimized height: ${optimizedHeight}"`);
-      console.log(`   ✅ Freight class: ${freightClass}`);
-
-      console.log(
-        "\n🟢 WWEX Request:",
-        JSON.stringify(speedshipRequest, null, 2),
-      );
-
-      // =====================================================
-      // CALL WWEX API WITH TIMEOUT
-      // =====================================================
-      const speedshipStartTime = Date.now();
-      const remainingTime = SHOPIFY_TIMEOUT - (Date.now() - startTime);
-      const wwexTimeout = Math.min(35000, remainingTime - 1000);
-
-      const token = await getAccessToken();
-
-      try {
-        const response = await axios.post(
-          "https://www.speedship.com/svc/shopFlow",
-          speedshipRequest,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-            },
-            timeout: wwexTimeout,
-          },
-        );
-
-        const speedshipResponseTime = Date.now() - speedshipStartTime;
-        console.log(
-          `🟢 WWEX API response time for ${originKey}: ${speedshipResponseTime}ms`,
-        );
-
-        res = response.data;
-
-        const offerList = response.data?.response?.offerList || [];
-
-        if (offerList.length === 0) {
-          console.warn(`⚠️ No offers from WWEX for ${originKey}`);
-          continue;
+    for (const result of allResults) {
+      if (result.status === "fulfilled" && result.value) {
+        if (result.value.service_code === "FEDEX_SMALL_PARCEL") {
+          // FedEx rate
+          fedexRates.push(result.value);
+          // rates.push(result.value);
+        } else if (result.value.rate) {
+          // WWEX rate (contains origin info)
+          wwexRates.push(result.value);
         }
-
-        const sortedOffers = offerList
-          .filter((o: any) => o.totalOfferPrice?.value)
-          .sort(
-            (a: any, b: any) =>
-              Number(a.totalOfferPrice.value) - Number(b.totalOfferPrice.value),
-          );
-
-        console.log(
-          `💰 WWEX returned ${sortedOffers.length} offers for ${originKey}:`,
-        );
-        sortedOffers.forEach((offer: any, idx: number) => {
-          const product = offer.offeredProductList[0];
-          console.log(
-            `   ${idx + 1}. ${offer.totalOfferPrice.value} - ${
-              product?.shopRQShipment?.timeInTransit?.serviceLevel || "Standard"
-            }`,
-          );
-        });
-
-        const selectedOffer = sortedOffers[0];
-        if (!selectedOffer) {
-          console.warn(`⚠️ No valid offers for ${originKey}`);
-          continue;
-        }
-
-        const product = selectedOffer.offeredProductList[0];
-        const speedshipRate = Number(product.offerPrice.value);
-        const transitDays =
-          Number(product.shopRQShipment?.timeInTransit?.transitDays) || 5;
-        const serviceLevel =
-          product.shopRQShipment?.timeInTransit?.serviceLevel || "Freight";
-        const offerID = product.offerId;
-        const productTransactionId = product.productTransactionId;
-        const quoteId = `SPEEDSHIP-${Date.now()}`;
-
-        console.log(`\n💰 SELECTED RATE FOR ${originKey}:`);
-        console.log(`   Rate: ${speedshipRate.toFixed(2)}`);
-        console.log(`   Transit: ${transitDays} days`);
-        console.log(`   Service: ${serviceLevel}`);
-        console.log(`   OfferId: ${offerID}`);
-        console.log(`   ProductTransactionId: ${productTransactionId}`);
-
-        // Log Speedship response with all important details
-        await logWWEXResponse({
-          requestId,
-          quoteId: quoteId,
-          rate: speedshipRate,
-          transitDays,
-          serviceLevel: `Speedship ${serviceLevel}`,
-          responseTimeMs: speedshipResponseTime,
-          rawResponse: response.data,
-        });
-
-        allShipmentRates.push({
-          origin: group.origin,
-          originKey,
-          rate: speedshipRate,
-          transitDays,
-          serviceLevel,
-          palletsNeeded,
-          weight: finalWeight,
-          offer: selectedOffer,
-          responseTimeMs: speedshipResponseTime,
-        });
-      } catch (error: any) {
-        console.error(`🔴 WWEX API Error for ${originKey}:`, error.message);
-        if (error.response) {
-          console.error("🔴 Response:", error.response.data);
-          console.error("🔴 Status:", error.response.status);
-        }
-        await logError(
-          `SPEEDSHIP_API_ERROR_${originKey}`,
-          error.message,
-          error.stack,
-          {
-            responseData: error.response?.data,
-            statusCode: error.response?.status,
-            origin: originKey,
-          },
-        );
       }
     }
 
     // =====================================================
-    // COMBINE ALL RATES OR RETURN FALLBACK
+    // COMBINE FEDEX RATES
     // =====================================================
-    if (allShipmentRates.length > 0) {
-      let totalRate = allShipmentRates.reduce((sum, r) => sum + r.rate, 0);
+
+    if (fedexRates.length > 0) {
+      const totalFedExRate = fedexRates.reduce((sum, r) => sum + r.rate, 0);
+      const maxFedExTransitDays = Math.max(...fedexRates.map((r) => r.transitDays));
+      const totalFedExPackages = fedexRates.reduce(
+        (sum, r) => sum + (r.packages || 0),
+        0,
+      );
+      const fedexOrigins = fedexRates.map(
+        (r) => `${r.origin.locality}, ${r.origin.region}`,
+      );
+
+      console.log("\n\n📦 ========================================");
+      console.log("📦 FINAL COMBINED FEDEX RATE");
+      console.log("📦 ========================================");
+      console.log(`   Total Rate: $${totalFedExRate.toFixed(2)}`);
+      console.log(`   Max Transit: ${maxFedExTransitDays} days`);
+      console.log(`   Total Packages: ${totalFedExPackages}`);
+      console.log(`   Origins: ${fedexOrigins.join(" + ")}`);
+
+      rates.push({
+        service_name: `FedEx Small Parcel`,
+        service_code: `FEDEX_SMALL_PARCEL`,
+        total_price: Math.round(totalFedExRate * 100).toString(),
+        currency: "USD",
+        description:
+          "Production time: 7–14 business days. Transit: 3-5 business days",
+      });
+
+      console.log("✅ Successfully created combined FedEx rate");
+    }
+
+    // =====================================================
+    // COMBINE WWEX RATES
+    // =====================================================
+
+    if (wwexRates.length > 0) {
+      let totalRate = wwexRates.reduce((sum, r) => sum + r.rate, 0);
       console.log("total rate===============================>", totalRate);
       totalRate = totalRate * 1.06;
       console.log(
         "after 6% add total rate=======================================>",
         totalRate,
       );
-      const maxTransitDays = Math.max(
-        ...allShipmentRates.map((r) => r.transitDays),
-      );
-      const totalPallets = allShipmentRates.reduce(
+
+      const maxTransitDays = Math.max(...wwexRates.map((r) => r.transitDays));
+      const totalPallets = wwexRates.reduce(
         (sum, r) => sum + r.palletsNeeded,
         0,
       );
-      const origins = allShipmentRates.map(
+      const origins = wwexRates.map(
         (r) => `${r.origin.locality}, ${r.origin.region}`,
       );
 
       console.log("\n\n🎯 ========================================");
-      console.log("🎯 FINAL COMBINED RATE");
+      console.log("🎯 FINAL COMBINED WWEX RATE");
       console.log("🎯 ========================================");
       console.log(`   Total Rate: ${totalRate.toFixed(2)}`);
       console.log(`   Max Transit: ${maxTransitDays} days`);
       console.log(`   Total Pallets: ${totalPallets}`);
       console.log(`   Origins: ${origins.join(" + ")}`);
 
-      const productionTimeText = "Production time: 7–14 business days.";
-      const shippingText = `Transit: 3-5 business days`;
-      const description = `${productionTimeText} ${shippingText}`;
-
       rates.push({
         service_name: "Speedship Freight",
         service_code: "SPEEDSHIP_FREIGHT",
         total_price: Math.round(totalRate * 100).toString() || "100",
         currency: "USD",
-        description,
+        description:
+          "Production time: 7–14 business days. Transit: 3-5 business days",
       });
-
-      console.log("rates========================>", rates);
 
       await logFinalShippingRate({
         requestId: "",
@@ -2824,41 +3096,30 @@ export async function POST(request: NextRequest) {
         items: items,
       });
 
-      console.log("✅ Successfully created combined rate");
-    } else {
+      console.log("✅ Successfully created combined WWEX rate");
+    }
+
+    // =====================================================
+    // FALLBACK IF NO RATES
+    // =====================================================
+
+    if (rates.length === 0) {
       console.warn("⚠️ No valid rates obtained, returning estimated rate");
-      const totalWeight = Array.from(itemsByOrigin.values()).reduce(
-        (sum, g) => sum + g.totalWeight,
-        0,
-      );
-      const estimatedRate = 150 + totalWeight * 0.5;
+      const estimatedRate = 150 + totalWeightForLog * 0.5;
 
       rates.push({
-        // service_name: "Speedship Freight (Estimated)",
-        // service_code: "SPEEDSHIP_FREIGHT_FALLBACK",
-        // total_price: Math.round(estimatedRate * 100).toString(),
-        // currency: "USD",
-        // description: "Production time: 7–14 business days. Transit: 3-5 business days",
+        service_name: "Speedship Freight (Estimated)",
+        service_code: "SPEEDSHIP_FREIGHT_ESTIMATED",
+        total_price: Math.round(estimatedRate * 100).toString(),
+        currency: "USD",
+        description:
+          "Production time: 7–14 business days. Transit: 3-5 business days",
       });
     }
 
     const totalTime = Date.now() - startTime;
     console.log(`\n⏱️  Total processing time: ${totalTime}ms`);
-
-    // console.log("🟢 Calling FedEx API for split shipment...");
-    // const fedexClient = new FedExClient();
-    // const fedexStartTime = Date.now();
-
-    // const fedexResponse = await fedexClient.getSplitShipmentRate(rate);
-    // // const fedexResponse = await fedexClient.getAllServiceRates(rate);
-
-    // const fedexResponseTime = Date.now() - fedexStartTime;
-    // console.log(`🟢 FedEx API response time: ${fedexResponseTime}ms`);
-
-    // console.log(
-    //   "fedexResponse=======================================>",
-    //   fedexResponse,
-    // );
+    console.log("rates========================>", rates);
 
     return NextResponse.json({ rates });
   } catch (error: any) {

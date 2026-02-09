@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -104,3 +104,15 @@ model FinalShippingRate {
   createdAt    DateTime     @default(now()) @map("created_at")
 }
 
+model ApiToken {
+  id           Int      @id @default(autoincrement())
+  provider     String   @unique @db.VarChar(50)
+  accessToken  String   @map("access_token") @db.Text
+  expiresAt    BigInt   @map("expires_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@index([provider], map: "idx_api_token_provider")
+  @@index([expiresAt], map: "idx_api_token_expires_at")
+  @@map("api_tokens")
+}
