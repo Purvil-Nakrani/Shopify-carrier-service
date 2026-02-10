@@ -2119,8 +2119,8 @@ async function getWWEXRateFast(
   try {
     const adjustedTotalWeight = group.totalWeight + PALLET_WEIGHT_LBS;
 
-    // const config = optimizeMultiPalletConfiguration(adjustedTotalWeight);
-    const config = optimizeMultiPalletConfiguration(group.totalWeight);
+    const config = optimizeMultiPalletConfiguration(adjustedTotalWeight);
+    // const config = optimizeMultiPalletConfiguration(group.totalWeight);
 
     const handlingUnitList = [];
     for (let i = 0; i < config.palletsNeeded; i++) {
@@ -2139,14 +2139,14 @@ async function getWWEXRateFast(
           width: { value: 40, unit: "IN" },
           height: { value: FIXED_PALLET_HEIGHT_IN, unit: "IN" },
         },
-        weight: { value: palletWeight, unit: "LB" },
-        // weight: { value: adjustedTotalWeight, unit: "LB" },
+        // weight: { value: palletWeight, unit: "LB" },
+        weight: { value: adjustedTotalWeight, unit: "LB" },
         shippedItemList: [
           {
             commodityClass: config.freightClass,
             isHazMat: false,
-            weight: { value: palletWeight, unit: "LB" },
-            // weight: { value: adjustedTotalWeight, unit: "LB" },
+            // weight: { value: palletWeight, unit: "LB" },
+            weight: { value: adjustedTotalWeight, unit: "LB" },
           },
         ],
       });
@@ -2195,8 +2195,8 @@ async function getWWEXRateFast(
           },
           handlingUnitList: handlingUnitList,
           totalHandlingUnitCount: config.palletsNeeded,
-          totalWeight: { value: group.totalWeight, unit: "LB" },
-          // totalWeight: { value: adjustedTotalWeight, unit: "LB" },
+          // totalWeight: { value: group.totalWeight, unit: "LB" },
+          totalWeight: { value: adjustedTotalWeight, unit: "LB" },
           returnLabelFlag: false,
           residentialDeliveryFlag: true,
           residentialPickupFlag: false,
@@ -2272,8 +2272,8 @@ async function getWWEXRateFast(
       rate: speedshipRate * 1.15, // Add 15% surcharge
       transitDays,
       palletsNeeded: config.palletsNeeded,
-      // weight: group.totalWeight,
-      weight: adjustedTotalWeight,
+      weight: group.totalWeight,
+      // weight: adjustedTotalWeight,
     };
   } catch (error: any) {
     console.warn(`⚠️ WWEX ${originKey} failed: ${error.message}`);
