@@ -1590,11 +1590,13 @@ export class FedExClient {
         },
         requestedShipment: {
           shipDateStamp: new Date().toISOString().split("T")[0],
-          pickupType: "USE_SCHEDULED_PICKUP",
+          // pickupType: "USE_SCHEDULED_PICKUP",
+          pickupType: "DROPOFF_AT_FEDEX_LOCATION",
           serviceType: serviceType,
           packagingType: "YOUR_PACKAGING",
           preferredCurrency: "USD",
-          rateRequestType: ["LIST", "ACCOUNT"],
+          // rateRequestType: ["LIST", "ACCOUNT"],
+          rateRequestType: ["ACCOUNT"],
           shipper: {
             address: shipperAddress,
           },
@@ -1615,21 +1617,23 @@ export class FedExClient {
               units: "LB",
               value: Number(pkg.weight.toFixed(1)),
             },
-            dimensions: {
-              length: Math.min(
-                Math.ceil(pkg.dimensions.length),
-                108,
-              ).toString(),
-              width: Math.min(Math.ceil(pkg.dimensions.width), 108).toString(),
-              height: Math.min(
-                Math.ceil(pkg.dimensions.height),
-                108,
-              ).toString(),
-              units: "IN",
-            },
+            // dimensions: {
+            //   length: Math.min(
+            //     Math.ceil(pkg.dimensions.length),
+            //     108,
+            //   ).toString(),
+            //   width: Math.min(Math.ceil(pkg.dimensions.width), 108).toString(),
+            //   height: Math.min(
+            //     Math.ceil(pkg.dimensions.height),
+            //     108,
+            //   ).toString(),
+            //   units: "IN",
+            // },
           })),
         },
       };
+
+      console.log("\n🟢 Fedex Request:", JSON.stringify(fedexRequest, null, 2));
 
       const response = await axios.post(
         `${this.apiUrl}/rate/v1/rates/quotes`,
@@ -1648,6 +1652,10 @@ export class FedExClient {
       const shipment = reply.ratedShipmentDetails[0];
       const transitDays = this.extractTransitDays(reply);
 
+      console.log(
+        "relplay==========================================>",
+        shipment,
+      );
       return {
         service: serviceType,
         rate: shipment.totalNetFedExCharge,
@@ -1718,7 +1726,16 @@ export class FedExClient {
       const accessToken = await getFEDEXToken();
 
       // Try both services in parallel for speed
-      const services = ["FEDEX_GROUND", "GROUND_HOME_DELIVERY"];
+      const services = [
+        "FEDEX_GROUND",
+        "GROUND_HOME_DELIVERY",
+        // "FEDEX_EXPRESS_SAVER",
+        // "FEDEX_2_DAY",
+        // "FEDEX_2_DAY_AM",
+        // "STANDARD_OVERNIGHT",
+        // "PRIORITY_OVERNIGHT",
+        // "FIRST_OVERNIGHT",
+      ];
 
       const ratePromises = services.map((service) =>
         this.getSingleServiceRate(
@@ -1746,7 +1763,8 @@ export class FedExClient {
       const cheapest = validRates[0];
 
       // Add 6% surcharge
-      const finalRate = +(cheapest.rate * 1.06).toFixed(2);
+      // const finalRate = +(cheapest.rate * 1.06).toFixed(2);
+      const finalRate = Number(cheapest.rate.toFixed(2));
 
       const elapsed = Date.now() - startTime;
       console.log(

@@ -1496,6 +1496,7 @@ function verifyShopifyWebhook(rawBody: string, hmacHeader: string): boolean {
 }
 
 const FIXED_PALLET_HEIGHT_IN = 35;
+const PALLET_WEIGHT_LBS = 50;
 const geocodingCache = new Map<string, GeocodingResult>();
 
 interface GeocodingResult {
@@ -1666,40 +1667,6 @@ function findClosestWarehouse(
 
   return closest;
 }
-
-// =====================================================
-// SIMPLIFIED PRODUCT ROUTING (Remove heavy logic)
-// =====================================================
-
-type ColorGroup = "RLX_ONLY" | "ARC_ONLY" | "BOTH";
-
-// function getSimplifiedRouting(item: any): Array<"RLX" | "ARC_AZ" | "ARC_WI"> {
-//   const title = `${item.name || ""} ${item.variant_title || ""}`.toLowerCase();
-
-//   // RLX exclusive indicators
-//   if (
-//     title.includes("confetti") ||
-//     title.includes("tape") ||
-//     title.includes("adhesive") ||
-//     title.includes("glue") ||
-//     title.includes("cleaner") ||
-//     title.includes("3/4")
-//   ) {
-//     return ["RLX"];
-//   }
-
-//   // ARC exclusive indicators
-//   if (
-//     title.includes("bright green") ||
-//     title.includes("silver") ||
-//     title.includes("white")
-//   ) {
-//     return ["ARC_AZ", "ARC_WI"];
-//   }
-
-//   // Default: available at all warehouses
-//   return ["RLX", "ARC_AZ", "ARC_WI"];
-// }
 
 // =====================================================
 // PRODUCT AVAILABILITY MATRIX
@@ -2132,7 +2099,7 @@ function optimizeMultiPalletConfiguration(totalWeight: number): {
   let freightClass = "70";
   if (density >= 30) freightClass = "60";
   else if (density >= 22.5) freightClass = "70";
-  else freightClass = "77.5";
+  else if (density < 22.5) freightClass = "77.5";
 
   return { palletsNeeded, weightPerPallet, freightClass };
 }
@@ -2150,6 +2117,9 @@ async function getWWEXRateFast(
   const startTime = Date.now();
 
   try {
+    const adjustedTotalWeight = group.totalWeight + PALLET_WEIGHT_LBS;
+
+    // const config = optimizeMultiPalletConfiguration(adjustedTotalWeight);
     const config = optimizeMultiPalletConfiguration(group.totalWeight);
 
     const handlingUnitList = [];
@@ -2170,11 +2140,13 @@ async function getWWEXRateFast(
           height: { value: FIXED_PALLET_HEIGHT_IN, unit: "IN" },
         },
         weight: { value: palletWeight, unit: "LB" },
+        // weight: { value: adjustedTotalWeight, unit: "LB" },
         shippedItemList: [
           {
             commodityClass: config.freightClass,
             isHazMat: false,
             weight: { value: palletWeight, unit: "LB" },
+            // weight: { value: adjustedTotalWeight, unit: "LB" },
           },
         ],
       });
@@ -2224,6 +2196,7 @@ async function getWWEXRateFast(
           handlingUnitList: handlingUnitList,
           totalHandlingUnitCount: config.palletsNeeded,
           totalWeight: { value: group.totalWeight, unit: "LB" },
+          // totalWeight: { value: adjustedTotalWeight, unit: "LB" },
           returnLabelFlag: false,
           residentialDeliveryFlag: true,
           residentialPickupFlag: false,
@@ -2299,7 +2272,8 @@ async function getWWEXRateFast(
       rate: speedshipRate * 1.15, // Add 15% surcharge
       transitDays,
       palletsNeeded: config.palletsNeeded,
-      weight: group.totalWeight,
+      // weight: group.totalWeight,
+      weight: adjustedTotalWeight,
     };
   } catch (error: any) {
     console.warn(`⚠️ WWEX ${originKey} failed: ${error.message}`);
@@ -2351,11 +2325,14 @@ export async function POST(request: NextRequest) {
     const rawBody = await request.text();
     const hmacHeader = request.headers.get("X-Shopify-Hmac-Sha256") || "";
 
+    console.log("rawbody=========================>", rawBody);
+
     if (!verifyShopifyWebhook(rawBody, hmacHeader)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const body = JSON.parse(rawBody);
+    console.log("🟢 body items===================", body.rate.items);
     const { rate } = body;
     if (!rate) return NextResponse.json({ rates: [] });
 
@@ -2417,8 +2394,10 @@ export async function POST(request: NextRequest) {
     //   ),
     // );
     let maxPerItemWeight = 0;
+    let fixedWeightItemsToalWeight = 0;
+    let isFixedWeightItemsExist = false;
 
-    for (const [originKey, group] of itemsByOrigin.entries()) {
+    for (const [, group] of itemsByOrigin.entries()) {
       for (const item of group.items) {
         // Calculate per-item weight correctly
         const isEmptyProperties =
@@ -2436,7 +2415,10 @@ export async function POST(request: NextRequest) {
         } else {
           // For items without properties (TILES/ACCESSORIES)
           const grams = Number(item.grams) || 0;
+          // perItemWeight = Number((grams / 453.592).toFixed(2));
           perItemWeight = Number((grams / 453.592).toFixed(2));
+          fixedWeightItemsToalWeight += perItemWeight * item.quantity;
+          isFixedWeightItemsExist = true;
         }
 
         if (perItemWeight > maxPerItemWeight) {
@@ -2453,83 +2435,91 @@ export async function POST(request: NextRequest) {
       `   Total weight: ${totalWeight.toFixed(2)} lbs (must be ≤ 750 lbs)`,
     );
 
+    console.log("==================================================>isFixedWeightItemsExist",isFixedWeightItemsExist)
+    console.log("fixedWeightItemsToalWeight",fixedWeightItemsToalWeight)
+    shouldCallFedEx = isFixedWeightItemsExist
+      ? fixedWeightItemsToalWeight <= 150
+      : maxPerItemWeight <= 150 && totalWeight <= 750;
+
+    console.log(
+      "=========================================================>shouldCallFedEx",
+      shouldCallFedEx,
+    );
+
     // if (maxPerItemWeight <= 150 && totalWeight <= 750) {
-    //   shouldCallFedEx = true;
+    if (shouldCallFedEx) {
+      // Pre-process packages ONCE
+      const packagesByOriginPromise =
+        preprocessFedExPackagesFast(itemsByOrigin);
 
-    //   console.log("=========================================================>shouldCallFedEx",shouldCallFedEx)
+      ratePromises.push(
+        (async () => {
+          try {
+            const packagesByOrigin = await Promise.race([
+              packagesByOriginPromise,
+              new Promise<null>((_, reject) =>
+                setTimeout(() => reject(new Error("FedEx prep timeout")), 2000),
+              ),
+            ]);
 
-    //   // Pre-process packages ONCE
-    //   const packagesByOriginPromise =
-    //     preprocessFedExPackagesFast(itemsByOrigin);
+            if (!packagesByOrigin) return null;
 
-    //   ratePromises.push(
-    //     (async () => {
-    //       try {
-    //         const packagesByOrigin = await Promise.race([
-    //           packagesByOriginPromise,
-    //           new Promise<null>((_, reject) =>
-    //             setTimeout(() => reject(new Error("FedEx prep timeout")), 2000),
-    //           ),
-    //         ]);
+            // Call FedEx for each origin in parallel
+            const fedexClient = new FedExClient();
+            const fedexCalls = Array.from(itemsByOrigin.entries()).map(
+              ([originKey, group]) =>
+                (async () => {
+                  try {
+                    const packages = packagesByOrigin.get(originKey);
+                    if (!packages) return null;
 
-    //         if (!packagesByOrigin) return null;
+                    const shipperAddress = {
+                      streetLines: group.origin.addressLineList.filter(Boolean),
+                      city: group.origin.locality,
+                      stateOrProvinceCode: group.origin.region,
+                      postalCode: group.origin.postalCode,
+                      countryCode: group.origin.countryCode,
+                      residential: false,
+                    };
 
-    //         // Call FedEx for each origin in parallel
-    //         const fedexClient = new FedExClient();
-    //         const fedexCalls = Array.from(itemsByOrigin.entries()).map(
-    //           ([originKey, group]) =>
-    //             (async () => {
-    //               try {
-    //                 const packages = packagesByOrigin.get(originKey);
-    //                 if (!packages) return null;
+                    const fedexRate = await Promise.race([
+                      fedexClient.getRateForOrigin(
+                        destination,
+                        packages,
+                        shipperAddress,
+                      ),
+                      new Promise<null>((_, reject) =>
+                        setTimeout(
+                          () => reject(new Error("FedEx timeout")),
+                          FEDEX_TIMEOUT,
+                        ),
+                      ),
+                    ]);
 
-    //                 const shipperAddress = {
-    //                   streetLines: group.origin.addressLineList.filter(Boolean),
-    //                   city: group.origin.locality,
-    //                   stateOrProvinceCode: group.origin.region,
-    //                   postalCode: group.origin.postalCode,
-    //                   countryCode: group.origin.countryCode,
-    //                   residential: false,
-    //                 };
+                    return fedexRate
+                      ? {
+                          service_code: "FEDEX_SMALL_PARCEL",
+                          originKey,
+                          rate: fedexRate.rate,
+                          transitDays: fedexRate.transitDays,
+                        }
+                      : null;
+                  } catch (err) {
+                    console.warn(`⚠️ FedEx ${originKey} failed`);
+                    return null;
+                  }
+                })(),
+            );
 
-    //                 const fedexRate = await Promise.race([
-    //                   fedexClient.getRateForOrigin(
-    //                     destination,
-    //                     packages,
-    //                     shipperAddress,
-    //                   ),
-    //                   new Promise<null>((_, reject) =>
-    //                     setTimeout(
-    //                       () => reject(new Error("FedEx timeout")),
-    //                       FEDEX_TIMEOUT,
-    //                     ),
-    //                   ),
-    //                 ]);
-
-    //                 return fedexRate
-    //                   ? {
-    //                       service_code: "FEDEX_SMALL_PARCEL",
-    //                       originKey,
-    //                       rate: fedexRate.rate,
-    //                       transitDays: fedexRate.transitDays,
-    //                     }
-    //                   : null;
-    //               } catch (err) {
-    //                 console.warn(`⚠️ FedEx ${originKey} failed`);
-    //                 return null;
-    //               }
-    //             })(),
-    //         );
-
-    //         const results = await Promise.all(fedexCalls);
-    //         return results.filter(Boolean);
-    //       } catch (err) {
-    //         console.warn("⚠️ FedEx failed:", err);
-    //         return null;
-    //       }
-    //     })(),
-    //   );
-    // }
+            const results = await Promise.all(fedexCalls);
+            return results.filter(Boolean);
+          } catch (err) {
+            console.warn("⚠️ FedEx failed:", err);
+            return null;
+          }
+        })(),
+      );
+    }
 
     // WWEX calls in parallel
     const wwexCalls = Array.from(itemsByOrigin.entries()).map(
@@ -2590,7 +2580,8 @@ export async function POST(request: NextRequest) {
         service_code: "FEDEX_SMALL_PARCEL",
         total_price: Math.round(totalFedEx * 100).toString(),
         currency: "USD",
-        description: "Production: 7–14 days. Transit: 3-5 days",
+        description:
+          "Production time: 7–14 business days. Transit: 3-5 business days",
       });
     }
 
@@ -2604,7 +2595,8 @@ export async function POST(request: NextRequest) {
         service_code: "SPEEDSHIP_FREIGHT",
         total_price: Math.round(totalWWEX * 100).toString(),
         currency: "USD",
-        description: "Production: 7–14 days. Transit: 3-5 days",
+        description:
+          "Production time: 7–14 business days. Transit: 3-5 business days",
       });
     }
 
@@ -2616,7 +2608,8 @@ export async function POST(request: NextRequest) {
         service_code: "SPEEDSHIP_FREIGHT_ESTIMATED",
         total_price: Math.round(estimatedRate * 100).toString(),
         currency: "USD",
-        description: "Production: 7–14 days. Transit: 3-5 days",
+        description:
+          "Production time: 7–14 business days. Transit: 3-5 business days",
       });
     }
 
@@ -2645,7 +2638,8 @@ export async function POST(request: NextRequest) {
           service_code: "SPEEDSHIP_FREIGHT_ERROR_FALLBACK",
           total_price: "15000",
           currency: "USD",
-          description: "Production: 7–14 days. Transit: 3-5 days",
+          description:
+            "Production time: 7–14 business days. Transit: 3-5 business days",
         },
       ],
     });
