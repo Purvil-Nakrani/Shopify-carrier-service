@@ -1763,8 +1763,8 @@ export class FedExClient {
       const cheapest = validRates[0];
 
       // Add 6% surcharge
-      // const finalRate = +(cheapest.rate * 1.06).toFixed(2);
-      const finalRate = Number(cheapest.rate.toFixed(2));
+      const finalRate = +(cheapest.rate * 1.06).toFixed(2);
+      // const finalRate = Number(cheapest.rate.toFixed(2));
 
       const elapsed = Date.now() - startTime;
       console.log(
