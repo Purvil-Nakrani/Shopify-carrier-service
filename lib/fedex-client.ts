@@ -1379,7 +1379,7 @@ interface FedExRateResponse {
 class FastPackageConsolidator {
   public consolidate(items: ProcessedItem[]): ConsolidatedPackage[] {
     const packages: ConsolidatedPackage[] = [];
-    
+
     // Expand items by quantity
     const expandedItems: ProcessedItem[] = [];
     for (const item of items) {
@@ -1495,18 +1495,18 @@ export class FedExClient {
     const processed: ProcessedItem[] = [];
 
     for (const item of items) {
-      const isRoll = Number(item.properties?.["Width (ft)"]) > 0 && 
-                     Number(item.properties?.["Length (ft)"]) > 0;
+      const isRoll =
+        Number(item.properties?.["Width (ft)"]) > 0 &&
+        Number(item.properties?.["Length (ft)"]) > 0;
       const isMat = item.name?.toLowerCase().includes("mat");
-      
+
       const type = isRoll ? "ROLL" : isMat ? "MAT" : "TILE";
 
       const perItemWeight = item.properties?.Weight
         ? Number(item.properties.Weight)
         : Number((item.grams / 453.592).toFixed(2));
 
-      const quantity =
-        item.properties?.Quantity || item.quantity || 1;
+      const quantity = item.properties?.Quantity || item.quantity || 1;
 
       const thickness = this.extractThickness(item.name);
 
@@ -1565,7 +1565,9 @@ export class FedExClient {
   // =====================================================
   // CONSOLIDATE PACKAGES (PUBLIC - for pre-processing)
   // =====================================================
-  public consolidatePackagesPublic(items: ProcessedItem[]): ConsolidatedPackage[] {
+  public consolidatePackagesPublic(
+    items: ProcessedItem[],
+  ): ConsolidatedPackage[] {
     const consolidator = new FastPackageConsolidator();
     return consolidator.consolidate(items);
   }
@@ -1614,9 +1616,15 @@ export class FedExClient {
               value: Number(pkg.weight.toFixed(1)),
             },
             dimensions: {
-              length: Math.min(Math.ceil(pkg.dimensions.length), 108).toString(),
+              length: Math.min(
+                Math.ceil(pkg.dimensions.length),
+                108,
+              ).toString(),
               width: Math.min(Math.ceil(pkg.dimensions.width), 108).toString(),
-              height: Math.min(Math.ceil(pkg.dimensions.height), 108).toString(),
+              height: Math.min(
+                Math.ceil(pkg.dimensions.height),
+                108,
+              ).toString(),
               units: "IN",
             },
           })),
@@ -1682,6 +1690,17 @@ export class FedExClient {
   }
 
   // =====================================================
+  // MAIN RATE FUNCTION - ORIGINAL (KEPT FOR COMPATIBILITY)
+  // =====================================================
+
+  async getSplitShipmentRate(request: any): Promise<any> {
+    console.log("🟢 FedEx: Processing rate request for CHEAPEST option...");
+    const startTime = Date.now();
+    try {
+    } catch (error: any) {}
+  }
+
+  // =====================================================
   // GET RATE FOR ORIGIN (Optimized for speed)
   // =====================================================
   async getRateForOrigin(
@@ -1700,7 +1719,7 @@ export class FedExClient {
 
       // Try both services in parallel for speed
       const services = ["FEDEX_GROUND", "GROUND_HOME_DELIVERY"];
-      
+
       const ratePromises = services.map((service) =>
         this.getSingleServiceRate(
           destination,
