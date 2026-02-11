@@ -182,6 +182,11 @@ function findClosestWarehouse(
   warehouses: Array<"RLX" | "ARC_AZ" | "ARC_WI">,
   destCoords: { lat: number; lng: number },
 ): "RLX" | "ARC_AZ" | "ARC_WI" {
+  if (warehouses.length === 0) {
+    console.warn("⚠️ No warehouses provided, defaulting to RLX");
+    return "RLX";
+  }
+
   let closest = warehouses[0];
   let minDist = Infinity;
 
@@ -635,6 +640,79 @@ function applyColorExclusions(
 // ULTRA-FAST WAREHOUSE OPTIMIZATION
 // =====================================================
 
+// function quickWarehouseSelection(
+//   items: any[],
+//   destCoords: { lat: number; lng: number },
+// ): Map<string, ItemGroup> {
+//   console.log("⚡ Ultra-fast warehouse selection...");
+
+//   const itemsByOrigin = new Map<string, ItemGroup>();
+
+//   let warehouses: Array<"RLX" | "ARC_AZ" | "ARC_WI"> = [];
+//   // Check for exclusive items
+//   const exclusiveItems = items
+//     .map((item) => ({
+//       item,
+//       warehouses: getSimplifiedRouting(item),
+//       weight: Number(item.grams / 453.592),
+//     }))
+//     // .filter((info) => info.warehouses.length === 1);
+
+//     console.log("exclusiveItems===================================>",exclusiveItems)
+
+//   if (exclusiveItems.length > 0) {
+//     // If all exclusive items are from same warehouse, consolidate there
+//     const exclusiveWH = exclusiveItems[0].warehouses[0];
+//     const allSameWH = exclusiveItems.every(
+//       (info) => info.warehouses[0] === exclusiveWH,
+//     );
+
+//     if (allSameWH) {
+//       console.log(`⚡ Consolidating all to ${exclusiveWH}`);
+//       const group: ItemGroup = {
+//         origin: ORIGIN_ADDRESSES[exclusiveWH],
+//         originKey: exclusiveWH,
+//         items: [],
+//         totalWeight: 0,
+//         perItemWeight: 0,
+//       };
+
+//       for (const item of items) {
+//         const weight = Number(item.grams / 453.592);
+//         const quantity = item.quantity || 1;
+//         group.items.push(item);
+//         group.totalWeight += weight * quantity;
+//       }
+
+//       itemsByOrigin.set(exclusiveWH, group);
+//       return itemsByOrigin;
+//     }
+//   }
+
+//   // Default: route to closest warehouse
+//   for (const item of items) {
+//     const warehouses = getSimplifiedRouting(item);
+//     const closest = findClosestWarehouse(warehouses, destCoords);
+
+//     if (!itemsByOrigin.has(closest)) {
+//       itemsByOrigin.set(closest, {
+//         origin: ORIGIN_ADDRESSES[closest],
+//         originKey: closest,
+//         items: [],
+//         totalWeight: 0,
+//         perItemWeight: 0,
+//       });
+//     }
+
+//     const group = itemsByOrigin.get(closest)!;
+//     const weight = Number(item.grams / 453.592);
+//     const quantity = item.quantity || 1;
+//     group.items.push(item);
+//     group.totalWeight += weight * quantity;
+//   }
+
+//   return itemsByOrigin;
+// }
 function quickWarehouseSelection(
   items: any[],
   destCoords: { lat: number; lng: number },
@@ -643,50 +721,47 @@ function quickWarehouseSelection(
 
   const itemsByOrigin = new Map<string, ItemGroup>();
 
-  // Check for exclusive items
-  const exclusiveItems = items
-    .map((item) => ({
-      item,
-      warehouses: getSimplifiedRouting(item),
-      weight: Number(item.grams / 453.592),
-    }))
-    // .filter((info) => info.warehouses.length === 1);
+  // Get routing info for all items
+  const itemRoutingInfo = items.map((item) => ({
+    item,
+    warehouses: getSimplifiedRouting(item),
+    weight: Number(item.grams / 453.592),
+  }));
 
-    console.log("exclusiveItems===================================>",exclusiveItems)
+  console.log("itemRoutingInfo==================================>", itemRoutingInfo);
 
-  if (exclusiveItems.length > 0) {
-    // If all exclusive items are from same warehouse, consolidate there
-    const exclusiveWH = exclusiveItems[0].warehouses[0];
-    const allSameWH = exclusiveItems.every(
-      (info) => info.warehouses[0] === exclusiveWH,
-    );
+  // STRATEGY 1: Check if all items can ship from a single warehouse
+  const commonWarehouses = findCommonWarehouses(itemRoutingInfo);
+  
+  if (commonWarehouses.length > 0) {
+    // Find the closest warehouse among those that can fulfill ALL items
+    const closest = findClosestWarehouse(commonWarehouses, destCoords);
+    console.log(`⚡ Consolidating all items to ${closest} (can fulfill all)`);
+    
+    const group: ItemGroup = {
+      origin: ORIGIN_ADDRESSES[closest],
+      originKey: closest,
+      items: [],
+      totalWeight: 0,
+      perItemWeight: 0,
+    };
 
-    if (allSameWH) {
-      console.log(`⚡ Consolidating all to ${exclusiveWH}`);
-      const group: ItemGroup = {
-        origin: ORIGIN_ADDRESSES[exclusiveWH],
-        originKey: exclusiveWH,
-        items: [],
-        totalWeight: 0,
-        perItemWeight: 0,
-      };
-
-      for (const item of items) {
-        const weight = Number(item.grams / 453.592);
-        const quantity = item.quantity || 1;
-        group.items.push(item);
-        group.totalWeight += weight * quantity;
-      }
-
-      itemsByOrigin.set(exclusiveWH, group);
-      return itemsByOrigin;
+    for (const info of itemRoutingInfo) {
+      const weight = info.weight;
+      const quantity = info.item.quantity || 1;
+      group.items.push(info.item);
+      group.totalWeight += weight * quantity;
     }
+
+    itemsByOrigin.set(closest, group);
+    return itemsByOrigin;
   }
 
-  // Default: route to closest warehouse
-  for (const item of items) {
-    const warehouses = getSimplifiedRouting(item);
-    const closest = findClosestWarehouse(warehouses, destCoords);
+  // STRATEGY 2: Split shipment - route each item to its closest available warehouse
+  console.log("⚡ Splitting shipment across multiple warehouses");
+  
+  for (const info of itemRoutingInfo) {
+    const closest = findClosestWarehouse(info.warehouses, destCoords);
 
     if (!itemsByOrigin.has(closest)) {
       itemsByOrigin.set(closest, {
@@ -699,14 +774,40 @@ function quickWarehouseSelection(
     }
 
     const group = itemsByOrigin.get(closest)!;
-    const weight = Number(item.grams / 453.592);
-    const quantity = item.quantity || 1;
-    group.items.push(item);
+    const weight = info.weight;
+    const quantity = info.item.quantity || 1;
+    group.items.push(info.item);
     group.totalWeight += weight * quantity;
   }
 
   return itemsByOrigin;
 }
+
+// Helper function to find warehouses that can fulfill ALL items
+function findCommonWarehouses(
+  itemRoutingInfo: Array<{
+    item: any;
+    warehouses: Array<"RLX" | "ARC_AZ" | "ARC_WI">;
+    weight: number;
+  }>
+): Array<"RLX" | "ARC_AZ" | "ARC_WI"> {
+  if (itemRoutingInfo.length === 0) return [];
+
+  // Start with the first item's warehouses
+  let common = [...itemRoutingInfo[0].warehouses];
+
+  // Intersect with each subsequent item's warehouses
+  for (let i = 1; i < itemRoutingInfo.length; i++) {
+    common = common.filter((wh) => itemRoutingInfo[i].warehouses.includes(wh));
+    
+    // Early exit if no common warehouses remain
+    if (common.length === 0) break;
+  }
+
+  console.log(`   📦 Common warehouses for all items: [${common.join(", ")}]`);
+  return common;
+}
+
 
 // =====================================================
 // OPTIMIZED PALLET CALCULATION (Simplified)
