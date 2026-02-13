@@ -518,7 +518,10 @@ function getSimplifiedRouting(item: any): Array<"RLX" | "ARC_AZ" | "ARC_WI"> {
   let finalArcAvailable: boolean;
   let finalNotes: string;
 
-  console.log("colorExclusions==================================================================>",colorExclusions)
+  console.log(
+    "colorExclusions==================================================================>",
+    colorExclusions,
+  );
 
   if (availability) {
     // We have product matrix data - combine with color check
@@ -571,7 +574,10 @@ function getSimplifiedRouting(item: any): Array<"RLX" | "ARC_AZ" | "ARC_WI"> {
       warehouseList.push("ARC_AZ", "ARC_WI");
     }
 
-    console.log("================================================>warehouseList",warehouseList)
+    console.log(
+      "================================================>warehouseList",
+      warehouseList,
+    );
     return warehouseList;
   }
 
@@ -599,7 +605,7 @@ function applyColorExclusions(
     // return warehouses.filter(
     //   (wh) => wh === "RLX" || wh === "ARC_AZ" || wh === "ARC_WI",
     // );
-    return ['RLX', 'ARC_AZ', 'ARC_WI']
+    return ["RLX", "ARC_AZ", "ARC_WI"];
   }
 
   // ARC exclusive colors
@@ -612,7 +618,7 @@ function applyColorExclusions(
     console.log(`      RLX Available: ❌`);
     console.log(`      ARC Available: ✅`);
     // return warehouses.filter((wh) => wh === "ARC_AZ" || wh === "ARC_WI");
-    return ['ARC_AZ', 'ARC_WI']
+    return ["ARC_AZ", "ARC_WI"];
   }
 
   // RLX exclusive colors
@@ -629,7 +635,7 @@ function applyColorExclusions(
     console.log(`      RLX Available: ✅`);
     console.log(`      ARC Available: ❌`);
     // return warehouses.filter((wh) => wh === "RLX");
-    return ['RLX']
+    return ["RLX"];
   }
 
   // No exclusions - return all warehouses
@@ -728,16 +734,19 @@ function quickWarehouseSelection(
     weight: Number(item.grams / 453.592),
   }));
 
-  console.log("itemRoutingInfo==================================>", itemRoutingInfo);
+  console.log(
+    "itemRoutingInfo==================================>",
+    itemRoutingInfo,
+  );
 
   // STRATEGY 1: Check if all items can ship from a single warehouse
   const commonWarehouses = findCommonWarehouses(itemRoutingInfo);
-  
+
   if (commonWarehouses.length > 0) {
     // Find the closest warehouse among those that can fulfill ALL items
     const closest = findClosestWarehouse(commonWarehouses, destCoords);
     console.log(`⚡ Consolidating all items to ${closest} (can fulfill all)`);
-    
+
     const group: ItemGroup = {
       origin: ORIGIN_ADDRESSES[closest],
       originKey: closest,
@@ -759,7 +768,7 @@ function quickWarehouseSelection(
 
   // STRATEGY 2: Split shipment - route each item to its closest available warehouse
   console.log("⚡ Splitting shipment across multiple warehouses");
-  
+
   for (const info of itemRoutingInfo) {
     const closest = findClosestWarehouse(info.warehouses, destCoords);
 
@@ -789,7 +798,7 @@ function findCommonWarehouses(
     item: any;
     warehouses: Array<"RLX" | "ARC_AZ" | "ARC_WI">;
     weight: number;
-  }>
+  }>,
 ): Array<"RLX" | "ARC_AZ" | "ARC_WI"> {
   if (itemRoutingInfo.length === 0) return [];
 
@@ -799,7 +808,7 @@ function findCommonWarehouses(
   // Intersect with each subsequent item's warehouses
   for (let i = 1; i < itemRoutingInfo.length; i++) {
     common = common.filter((wh) => itemRoutingInfo[i].warehouses.includes(wh));
-    
+
     // Early exit if no common warehouses remain
     if (common.length === 0) break;
   }
@@ -807,7 +816,6 @@ function findCommonWarehouses(
   console.log(`   📦 Common warehouses for all items: [${common.join(", ")}]`);
   return common;
 }
-
 
 // =====================================================
 // OPTIMIZED PALLET CALCULATION (Simplified)
@@ -1007,6 +1015,13 @@ async function getWWEXRateFast(
     };
   } catch (error: any) {
     console.warn(`⚠️ WWEX ${originKey} failed: ${error.message}`);
+
+    await logError(`WWEX_${originKey}`, error.message, error.stack, {
+      responseData: error.response?.data,
+      statusCode: error.response?.status,
+      origin: originKey,
+    });
+
     return null;
   }
 }
@@ -1172,14 +1187,16 @@ export async function POST(request: NextRequest) {
     );
     console.log("fixedWeightItemsToalWeight", fixedWeightItemsToalWeight);
 
-    const shouldLenghWidthItemsCallFedex= maxPerItemWeight <= 150 && totalWeight <= 750;
-    const shouldFixedWeightItemsCallFedex= fixedWeightItemsToalWeight <= 150;
+    const shouldLenghWidthItemsCallFedex =
+      maxPerItemWeight <= 150 && totalWeight <= 750;
+    const shouldFixedWeightItemsCallFedex = fixedWeightItemsToalWeight <= 150;
 
     // shouldCallFedEx = isFixedWeightItemsExist
     //   ? fixedWeightItemsToalWeight <= 150
     //   : maxPerItemWeight <= 150 && totalWeight <= 750;
 
-    shouldCallFedEx = shouldLenghWidthItemsCallFedex && shouldFixedWeightItemsCallFedex;
+    shouldCallFedEx =
+      shouldLenghWidthItemsCallFedex && shouldFixedWeightItemsCallFedex;
 
     console.log(
       "=========================================================>shouldCallFedEx",
@@ -1369,6 +1386,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ rates });
   } catch (error: any) {
     console.error("🔴 Error:", error.message);
+
+    await logError("CARRIER_SERVICE_ERROR", error.message, error.stack);
 
     // Return fallback on error
     return NextResponse.json({

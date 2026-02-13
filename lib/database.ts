@@ -161,5 +161,64 @@ export async function logError(errorType: string, errorMessage: string, stackTra
   });
 }
 
-export default { logRateRequest, logWWEXResponse, getCachedRate, cacheRate, logError };
+// =====================================================
+// ERROR RETRIEVAL FUNCTIONS
+// =====================================================
+
+/**
+ * Get all errors with pagination
+ */
+export async function getErrorLogs(options?: {
+  page?: number;
+  limit?: number;
+  errorType?: string;
+  startDate?: Date;
+  endDate?: Date;
+}) {
+  const page = options?.page || 1;
+  const limit = options?.limit || 50;
+  const skip = (page - 1) * limit;
+
+  const where: any = {};
+
+  if (options?.errorType) {
+    where.errorType = options.errorType;
+  }
+
+  if (options?.startDate || options?.endDate) {
+    where.createdAt = {};
+    if (options.startDate) {
+      where.createdAt.gte = options.startDate;
+    }
+    if (options.endDate) {
+      where.createdAt.lte = options.endDate;
+    }
+  }
+
+  const [errors, total] = await Promise.all([
+    prisma.errorLog.findMany({
+      where,
+      orderBy: {
+        createdAt: 'desc'
+      },
+      skip,
+      take: limit,
+    }),
+    prisma.errorLog.count({ where })
+  ]);
+
+  return {
+    errors,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      hasNext: page * limit < total,
+      hasPrev: page > 1
+    }
+  };
+}
+
+export default { logRateRequest, logWWEXResponse, getCachedRate, cacheRate, logError, getErrorLogs };
 

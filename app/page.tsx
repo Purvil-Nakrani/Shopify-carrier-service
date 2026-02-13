@@ -1,6 +1,7 @@
 import CarrierServiceToggle from './components/CarrierServiceToggle';
 import CarrierServiceStatus from './components/CarrierServiceStatus';
 import CarrierServiceRate from './components/CarrierServiceRate';
+import CarrierServiceErrorLogs from './components/CarrierServiceErrorLogs';
 
 export default function Home() {
   return (
@@ -18,6 +19,8 @@ export default function Home() {
 
       {/* Carrier Service Toggle */}
       <CarrierServiceToggle />
+
+      <CarrierServiceErrorLogs/>
 
       <CarrierServiceRate/>
     </div>
