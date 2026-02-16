@@ -3061,10 +3061,10 @@ export async function POST(request: NextRequest) {
     ratePromises.push(...wwexCalls);
 
     // 3. SEFL calls in parallel
-    const seflCalls = Array.from(itemsByOrigin.entries()).map(
-      ([originKey, group]) => getSEFLRateFast(originKey, group, destination),
-    );
-    ratePromises.push(...seflCalls);
+    // const seflCalls = Array.from(itemsByOrigin.entries()).map(
+    //   ([originKey, group]) => getSEFLRateFast(originKey, group, destination),
+    // );
+    // ratePromises.push(...seflCalls);
 
     // =====================================================
     // STEP 3: WAIT WITH GLOBAL TIMEOUT
