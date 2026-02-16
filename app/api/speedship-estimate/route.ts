@@ -1577,16 +1577,18 @@ import {
 import FedExClient from "@/lib/fedex-client";
 import { getWWEXToken } from "@/lib/getWWEXToken";
 import SEFLClient from "@/lib/sefl-client";
+import FedExLTLClient from "@/lib/fedex-ltl-client";
 
 // =====================================================
 // CRITICAL: TIMEOUT CONFIGURATION - OPTIMIZED FOR 9 SECONDS
 // =====================================================
-const MAX_TOTAL_TIME = 9000; // 9 seconds total
+const MAX_TOTAL_TIME = 11000; // 9 seconds total
 const FEDEX_TIMEOUT = 4000; // 4 seconds for FedEx
 const WWEX_TIMEOUT = 13000; // 6 seconds for WWEX
-const SEFL_TIMEOUT = 6000; // 6 seconds for SEFL
-const SEFL_RETRY_DELAY = 2000; // 2 seconds between SEFL retries
+const SEFL_TIMEOUT = 9000; // 6 seconds for SEFL
+const SEFL_RETRY_DELAY = 1200; // 2 seconds between SEFL retries
 const SEFL_MAX_RETRIES = 2; // Maximum 2 retries
+const FEDEX_LTL_TIMEOUT = 5000;
 
 // Minimum wait before returning results (if we get responses faster)
 const MIN_WAIT_FOR_FREIGHT = 5000; // Wait at least 5s for WWEX/SEFL
@@ -2649,6 +2651,78 @@ async function preprocessFedExPackagesFast(
   return packagesByOrigin;
 }
 
+async function getFedExLTLRateFast(
+  originKey: string,
+  group: ItemGroup,
+  destination: any,
+): Promise<any> {
+  const startTime = Date.now();
+
+  try {
+    const adjustedTotalWeight = group.totalWeight;
+    const config = optimizeMultiPalletConfiguration(adjustedTotalWeight);
+
+    const fedexLTLClient = new FedExLTLClient();
+
+    // Convert to LTL freight items
+    const ltlItems = fedexLTLClient.convertToLTLFreightItems(
+      group.totalWeight,
+      config.palletsNeeded,
+      config.weightPerPallet,
+      config.freightClass,
+      PALLET_WEIGHT_LBS,
+    );
+
+    console.log(`\n🟠 FedEx LTL Request for ${originKey}:`);
+    console.log(`   Weight: ${config.totalWeightWithPallets} lbs`);
+    console.log(`   Freight Class: ${config.freightClass}`);
+    console.log(`   Pallets: ${config.palletsNeeded}`);
+
+    const ltlStartTime = Date.now();
+
+    const result = await Promise.race([
+      fedexLTLClient.getLTLRate(
+        group.origin,
+        destination,
+        ltlItems,
+        config.totalWeightWithPallets,
+      ),
+      new Promise<null>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("FedEx LTL timeout")),
+          FEDEX_LTL_TIMEOUT,
+        ),
+      ),
+    ]);
+
+    const ltlResponseTime = Date.now() - ltlStartTime;
+    console.log(
+      `🟠 FedEx LTL API response time for ${originKey}: ${ltlResponseTime}ms`,
+    );
+
+    if (!result || !result.rate) {
+      console.warn(`⚠️ FedEx LTL ${originKey}: No rate returned`);
+      return null;
+    }
+
+    console.log(
+      `✅ FedEx LTL ${originKey}: $${result.rate} (${Date.now() - startTime}ms)`,
+    );
+
+    return {
+      originKey,
+      rate: result.rate,
+      transitDays: result.transitDays,
+      weight: result.totalWeight,
+      palletsNeeded: result.palletsNeeded,
+      serviceLevel: result.serviceLevel,
+    };
+  } catch (error: any) {
+    console.warn(`⚠️ FedEx LTL ${originKey} failed: ${error.message}`);
+    return null;
+  }
+}
+
 // =====================================================
 // SEFL RATE - OPTIMIZED WITH PROPER CONFIG
 // =====================================================
@@ -2661,7 +2735,7 @@ async function getSEFLRateFast(
   const startTime = Date.now();
 
   try {
-    const adjustedTotalWeight = group.totalWeight;
+    const adjustedTotalWeight = group.totalWeight + PALLET_WEIGHT_LBS;
     const config = optimizeMultiPalletConfiguration(adjustedTotalWeight);
 
     const seflWeight = adjustedTotalWeight;
@@ -2968,6 +3042,15 @@ export async function POST(request: NextRequest) {
           }
         })(),
       );
+    } else {
+      // ✅ CALL FEDEX FREIGHT LTL
+      // console.log("🟠 Calling FedEx Freight LTL API");
+
+      // const fedexLTLCalls = Array.from(itemsByOrigin.entries()).map(
+      //   ([originKey, group]) =>
+      //     getFedExLTLRateFast(originKey, group, destination),
+      // );
+      // ratePromises.push(...fedexLTLCalls);
     }
 
     // 2. WWEX calls in parallel
@@ -2978,10 +3061,10 @@ export async function POST(request: NextRequest) {
     ratePromises.push(...wwexCalls);
 
     // 3. SEFL calls in parallel
-    // const seflCalls = Array.from(itemsByOrigin.entries()).map(
-    //   ([originKey, group]) => getSEFLRateFast(originKey, group, destination),
-    // );
-    // ratePromises.push(...seflCalls);
+    const seflCalls = Array.from(itemsByOrigin.entries()).map(
+      ([originKey, group]) => getSEFLRateFast(originKey, group, destination),
+    );
+    ratePromises.push(...seflCalls);
 
     // =====================================================
     // STEP 3: WAIT WITH GLOBAL TIMEOUT
@@ -3005,6 +3088,7 @@ export async function POST(request: NextRequest) {
     const wwexRates: any[] = [];
     const fedexRates: any[] = [];
     const seflRates: any[] = [];
+    const fedexLTLRates: any[] = [];
 
     for (const result of allResults as PromiseSettledResult<any>[]) {
       if (result.status === "fulfilled" && result.value) {
@@ -3016,6 +3100,9 @@ export async function POST(request: NextRequest) {
         } else if (result.value.quoteNumber) {
           // SEFL result (has quoteNumber)
           seflRates.push(result.value);
+        } else if (result.value.serviceLevel?.includes("FREIGHT")) {
+          // FedEx LTL result (NEW)
+          fedexLTLRates.push(result.value);
         } else if (result.value.rate) {
           // WWEX result
           wwexRates.push(result.value);
@@ -3040,6 +3127,22 @@ export async function POST(request: NextRequest) {
         description:
           "Production time: 7–14 business days. Transit: 3-5 business days",
       });
+    }
+
+    // 2. FedEx Freight LTL (if not eligible for small parcel and called)
+    if (!shouldCallFedEx && fedexLTLRates.length > 0) {
+      const totalFedExLTL = fedexLTLRates.reduce((sum, r) => sum + r.rate, 0);
+
+      rates.push({
+        service_name: "FedEx Freight LTL",
+        service_code: "FEDEX_FREIGHT_LTL",
+        total_price: Math.round(totalFedExLTL * 100).toString(),
+        currency: "USD",
+        description:
+          "Production time: 7–14 business days. Transit: 3-5 business days",
+      });
+
+      console.log(`✅ FedEx Freight LTL: $${totalFedExLTL.toFixed(2)}`);
     }
 
     // Compare WWEX vs SEFL and pick the lowest

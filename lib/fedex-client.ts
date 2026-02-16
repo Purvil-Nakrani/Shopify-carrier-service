@@ -368,18 +368,12 @@ export class FedExClient {
               units: "LB",
               value: Number(pkg.weight.toFixed(1)),
             },
-            // dimensions: {
-            //   length: Math.min(
-            //     Math.ceil(pkg.dimensions.length),
-            //     108,
-            //   ).toString(),
-            //   width: Math.min(Math.ceil(pkg.dimensions.width), 108).toString(),
-            //   height: Math.min(
-            //     Math.ceil(pkg.dimensions.height),
-            //     108,
-            //   ).toString(),
-            //   units: "IN",
-            // },
+            dimensions: {
+              length: 24,
+              width: 24,
+              height: 24,
+              units: "IN",
+            },
           })),
         },
       };

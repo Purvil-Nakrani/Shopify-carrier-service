@@ -247,10 +247,10 @@ class SEFLClient {
     try {
       const quoteDetails = await this.getQuote(quoteNumber);
 
-      console.log(
-        "SEFL Quote Details:================================>",
-        JSON.stringify(quoteDetails, null, 2),
-      );
+      // console.log(
+      //   "SEFL Quote Details:================================>",
+      //   JSON.stringify(quoteDetails, null, 2),
+      // );
 
       // ✅ Check if quote is ready (has actual rate data)
       if (quoteDetails.rateQuote && quoteDetails.rateQuote !== "") {
