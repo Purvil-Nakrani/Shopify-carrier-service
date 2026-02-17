@@ -3044,13 +3044,13 @@ export async function POST(request: NextRequest) {
       );
     } else {
       // ✅ CALL FEDEX FREIGHT LTL
-      // console.log("🟠 Calling FedEx Freight LTL API");
+      console.log("🟠 Calling FedEx Freight LTL API");
 
-      // const fedexLTLCalls = Array.from(itemsByOrigin.entries()).map(
-      //   ([originKey, group]) =>
-      //     getFedExLTLRateFast(originKey, group, destination),
-      // );
-      // ratePromises.push(...fedexLTLCalls);
+      const fedexLTLCalls = Array.from(itemsByOrigin.entries()).map(
+        ([originKey, group]) =>
+          getFedExLTLRateFast(originKey, group, destination),
+      );
+      ratePromises.push(...fedexLTLCalls);
     }
 
     // 2. WWEX calls in parallel
@@ -3061,10 +3061,21 @@ export async function POST(request: NextRequest) {
     ratePromises.push(...wwexCalls);
 
     // 3. SEFL calls in parallel
-    // const seflCalls = Array.from(itemsByOrigin.entries()).map(
-    //   ([originKey, group]) => getSEFLRateFast(originKey, group, destination),
-    // );
-    // ratePromises.push(...seflCalls);
+    const SEFL_SUPPORTED_ORIGINS = ["RLX"];
+    const seflCalls = Array.from(itemsByOrigin.entries())
+      .filter(([originKey]) => {
+        if (!SEFL_SUPPORTED_ORIGINS.includes(originKey)) {
+          console.log(
+            `⏭️ Skipping SEFL for ${originKey} — outside SEFL Southeast network`,
+          );
+          return false;
+        }
+        return true;
+      })
+      .map(([originKey, group]) =>
+        getSEFLRateFast(originKey, group, destination),
+      );
+    ratePromises.push(...seflCalls);
 
     // =====================================================
     // STEP 3: WAIT WITH GLOBAL TIMEOUT

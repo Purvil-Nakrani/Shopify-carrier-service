@@ -471,15 +471,11 @@ class FreightClassCalculator {
     if (density >= 30) return "CLASS_060";
     if (density >= 22.5) return "CLASS_065";
     if (density >= 15) return "CLASS_070";
-    if (density >= 13.5) return "CLASS_077_5";
     if (density >= 12) return "CLASS_085";
-    if (density >= 10.5) return "CLASS_092_5";
-    if (density >= 9) return "CLASS_100";
-    if (density >= 8) return "CLASS_110";
-    if (density >= 7) return "CLASS_125";
-    if (density >= 6) return "CLASS_150";
-    if (density >= 5) return "CLASS_175";
-    if (density >= 4) return "CLASS_200";
+    if (density >= 10) return "CLASS_092_5";
+    if (density >= 8) return "CLASS_100";
+    if (density >= 6) return "CLASS_125";
+    if (density >= 4) return "CLASS_175";
     if (density >= 3) return "CLASS_250";
     if (density >= 2) return "CLASS_300";
     if (density >= 1) return "CLASS_400";
@@ -825,22 +821,32 @@ export class FedExLTLClient {
           returnTransitTimes: true,
         },
         freightRequestedShipment: {
+          // shipper: {
+          //   address: {
+          //     streetLines: ["312 East 52 Bypass"],
+          //     city: "STAFFORD",
+          //     stateOrProvinceCode: "TX",
+          //     postalCode: "77477",
+          //     countryCode: "US",
+          //     residential: false,
+          //   },
+          // },
           shipper: {
             address: {
-              streetLines: ["312 East 52 Bypass"],
-              city: "Pilot Mountain",
-              stateOrProvinceCode: "NC",
-              postalCode: "27041",
-              countryCode: "US",
+              streetLines: originAddress.addressLineList.filter(Boolean),
+              city: originAddress.locality,
+              stateOrProvinceCode: originAddress.region,
+              postalCode: originAddress.postalCode,
+              countryCode: originAddress.countryCode,
               residential: false,
             },
           },
           recipient: {
             address: {
-              streetLines: ["4102 Washington St NE"],
-              city: "Columbia Heights",
-              stateOrProvinceCode: "MN",
-              postalCode: "55421",
+              streetLines: [destination.address1 || ""],
+              city: destination.city || "",
+              stateOrProvinceCode: destination.province || "",
+              postalCode: destination.postal_code || "",
               countryCode: "US",
               residential: true,
             },
@@ -876,7 +882,8 @@ export class FedExLTLClient {
               },
               weight: {
                 units: "LB",
-                value: Math.round(totalWeight), // ✅ FIX: Round weight
+                // value: Math.round(totalWeight), // ✅ FIX: Round weight
+                value: totalWeight, // ✅ FIX: Round weight
               },
               dimensions: {
                 length: 48,
@@ -884,13 +891,12 @@ export class FedExLTLClient {
                 height: 35,
                 units: "IN",
               },
-              associatedFreightLineItems: ltlItems.map((_, index) => ({
-                id: (index + 1).toString(), // ✅ FIX: Unique IDs
-              })),
+              associatedFreightLineItems: [{ id: "1" }],
             },
           ],
           totalPackageCount: 1,
-          totalWeight: Math.round(totalWeight), // ✅ FIX: Round weight
+          // totalWeight: Math.round(totalWeight), // ✅ FIX: Round weight
+          totalWeight: totalWeight, // ✅ FIX: Round weight
           freightShipmentDetail: {
             role: "SHIPPER",
             accountNumber: {
@@ -905,11 +911,12 @@ export class FedExLTLClient {
             },
             lineItem: ltlItems.map((item, index) => ({
               handlingUnits: 1,
-              subPackagingType: "BAG",
+              subPackagingType: "PALLET",
               description: item.description || "Rubber Flooring Products",
               weight: {
                 units: "LB",
-                value: Math.round(item.weight * 100) / 100, // ✅ FIX: Round to 2 decimals
+                // value: Math.round(item.weight * 100) / 100, // ✅ FIX: Round to 2 decimals
+                value: item.weight,
               },
               pieces: 1, // ✅ FIX: Changed from 0 to 1
               volume: {
@@ -950,7 +957,7 @@ export class FedExLTLClient {
               amount: "100",
               currency: "USD",
             },
-            totalHandlingUnits: ltlItems.length, // ✅ FIX: Changed from 1 to 5
+            totalHandlingUnits: ltlItems.reduce((sum, _) => sum + 1, 0),
             alternateBillingParty: {
               accountNumber: {
                 value: "210034063",
@@ -960,7 +967,7 @@ export class FedExLTLClient {
           freightShipmentSpecialServices: {
             specialServiceTypes: [
               "LIFTGATE_DELIVERY",
-              "APPOINTMENT_DELIVERY", // ✅ FIX: Changed from CALL_BEFORE_DELIVERY
+              "CALL_BEFORE_DELIVERY", // ✅ FIX: Changed from CALL_BEFORE_DELIVERY
             ],
           },
         },
@@ -971,144 +978,6 @@ export class FedExLTLClient {
         },
       };
 
-      // =====================================================
-      // IF THIS STILL FAILS, TRY THIS MINIMAL VERSION:
-      // =====================================================
-
-      const minimalTestRequest = {
-        accountNumber: {
-          value: "207407940",
-        },
-        rateRequestControlParameters: {
-          returnTransitTimes: true,
-        },
-        freightRequestedShipment: {
-          shipper: {
-            address: {
-              streetLines: ["312 East 52 Bypass"],
-              city: "Pilot Mountain",
-              stateOrProvinceCode: "NC",
-              postalCode: "27041",
-              countryCode: "US",
-              residential: false,
-            },
-          },
-          recipient: {
-            address: {
-              streetLines: ["4102 Washington St NE"],
-              city: "Columbia Heights",
-              stateOrProvinceCode: "MN",
-              postalCode: "55421",
-              countryCode: "US",
-              residential: false, // Try business first
-            },
-          },
-          serviceType: "FEDEX_FREIGHT_ECONOMY", // Or try FEDEX_FREIGHT_PRIORITY
-          preferredCurrency: "USD",
-          shippingChargesPayment: {
-            payor: {
-              responsibleParty: {
-                accountNumber: {
-                  value: "210034063",
-                },
-              },
-            },
-            paymentType: "SENDER",
-          },
-          shipDateStamp: "2026-02-18",
-          requestedPackageLineItems: [
-            {
-              subPackagingType: "PALLET",
-              groupPackageCount: 1,
-              declaredValue: {
-                amount: "100",
-                currency: "USD",
-              },
-              weight: {
-                units: "LB",
-                value: 1000,
-              },
-              dimensions: {
-                length: 48,
-                width: 40,
-                height: 35,
-                units: "IN",
-              },
-              associatedFreightLineItems: [{ id: "1" }],
-            },
-          ],
-          totalPackageCount: 1,
-          totalWeight: 1000,
-          freightShipmentDetail: {
-            role: "SHIPPER",
-            accountNumber: {
-              value: "210034063",
-            },
-            shipmentDimensions: {
-              length: 48,
-              width: 40,
-              height: 35,
-              units: "IN",
-            },
-            lineItem: [
-              {
-                handlingUnits: 1,
-                subPackagingType: "PALLET",
-                description: "Rubber Flooring Products",
-                weight: {
-                  units: "LB",
-                  value: 1000,
-                },
-                pieces: 1,
-                volume: {
-                  units: "CUBIC_FT",
-                  value: 38.89,
-                },
-                freightClass: "CLASS_065",
-                id: "1",
-                dimensions: {
-                  length: 48,
-                  width: 40,
-                  height: 35,
-                  units: "IN",
-                },
-              },
-            ],
-            fedExFreightBillingContactAndAddress: {
-              address: {
-                streetLines: ["312 East 52 Bypass"],
-                city: "Pilot Mountain",
-                stateOrProvinceCode: "NC",
-                postalCode: "27041",
-                countryCode: "US",
-                residential: false,
-              },
-              contact: {
-                personName: "John Doe",
-                emailAddress: "contact@example.com",
-                phoneNumber: "1234567890",
-                companyName: "Your Company",
-              },
-            },
-            declaredValuePerUnit: {
-              amount: "100",
-              currency: "USD",
-            },
-            totalHandlingUnits: 1,
-            alternateBillingParty: {
-              accountNumber: {
-                value: "210034063",
-              },
-            },
-          },
-          // Try without special services first
-        },
-        version: {
-          major: "1",
-          minor: "2",
-          patch: "1",
-        },
-      };
       // const fedexLTLRequest = {
       //   accountNumber: {
       //     value: "207407940",

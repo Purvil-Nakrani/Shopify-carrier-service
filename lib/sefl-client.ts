@@ -103,7 +103,40 @@ class SEFLClient {
     }
   }
 
+  private readonly SEFL_SUPPORTED_STATES = [
+    "AL",
+    "AR",
+    "FL",
+    "GA",
+    "IL",
+    "IN",
+    "KY",
+    "LA",
+    "MD",
+    "MS",
+    "NC",
+    "OH",
+    "SC",
+    "TN",
+    "TX",
+    "VA",
+    "WV",
+  ];
+
   async getShippingRate(shipmentData: ShipmentData): Promise<SEFLRate> {
+    // ✅ Validate origin state is in SEFL network
+    const originState = shipmentData.origin.state.toUpperCase();
+    if (!this.SEFL_SUPPORTED_STATES.includes(originState)) {
+      console.log(
+        `⏭️ SEFL skipped: origin state ${originState} not in SEFL network`,
+      );
+      return {
+        success: false,
+        carrier: "SEFL",
+        error: `Origin state ${originState} not serviced by SEFL`,
+      };
+    }
+
     try {
       // Auto-calculate freight class if not provided
       const freightClass =
