@@ -2216,83 +2216,31 @@ function applyColorExclusions(
   return warehouses;
 }
 
+function calculateItemTotalWeight(item: any): number {
+  const isEmptyProperties =
+    !item.properties || Object.keys(item.properties).length === 0;
+
+  if (!isEmptyProperties && item.properties?.Weight) {
+    // ROLLS/MATS: use area × weight per sq ft × number of rolls
+    const width = parseFloat(item.properties?.["Width (ft)"] || "0");
+    const length = parseFloat(item.properties?.["Length (ft)"] || "0");
+    const areaSqFT = width * length;
+    const grams = Number(item.grams) || 0;
+    const perSqFTWeight = Number((grams / 453.592).toFixed(2));
+    const rollQuantity = parseFloat(item.properties?.["Quantity"] || "1");
+    return perSqFTWeight * areaSqFT * rollQuantity;
+  } else {
+    // TILES/ACCESSORIES: grams per unit × quantity
+    const grams = Number(item.grams) || 0;
+    const quantity = item.quantity || 1;
+    return Number((grams / 453.592).toFixed(2)) * quantity;
+  }
+}
+
 // =====================================================
 // ULTRA-FAST WAREHOUSE OPTIMIZATION
 // =====================================================
 
-// function quickWarehouseSelection(
-//   items: any[],
-//   destCoords: { lat: number; lng: number },
-// ): Map<string, ItemGroup> {
-//   console.log("⚡ Ultra-fast warehouse selection...");
-
-//   const itemsByOrigin = new Map<string, ItemGroup>();
-
-//   let warehouses: Array<"RLX" | "ARC_AZ" | "ARC_WI"> = [];
-//   // Check for exclusive items
-//   const exclusiveItems = items
-//     .map((item) => ({
-//       item,
-//       warehouses: getSimplifiedRouting(item),
-//       weight: Number(item.grams / 453.592),
-//     }))
-//     // .filter((info) => info.warehouses.length === 1);
-
-//     console.log("exclusiveItems===================================>",exclusiveItems)
-
-//   if (exclusiveItems.length > 0) {
-//     // If all exclusive items are from same warehouse, consolidate there
-//     const exclusiveWH = exclusiveItems[0].warehouses[0];
-//     const allSameWH = exclusiveItems.every(
-//       (info) => info.warehouses[0] === exclusiveWH,
-//     );
-
-//     if (allSameWH) {
-//       console.log(`⚡ Consolidating all to ${exclusiveWH}`);
-//       const group: ItemGroup = {
-//         origin: ORIGIN_ADDRESSES[exclusiveWH],
-//         originKey: exclusiveWH,
-//         items: [],
-//         totalWeight: 0,
-//         perItemWeight: 0,
-//       };
-
-//       for (const item of items) {
-//         const weight = Number(item.grams / 453.592);
-//         const quantity = item.quantity || 1;
-//         group.items.push(item);
-//         group.totalWeight += weight * quantity;
-//       }
-
-//       itemsByOrigin.set(exclusiveWH, group);
-//       return itemsByOrigin;
-//     }
-//   }
-
-//   // Default: route to closest warehouse
-//   for (const item of items) {
-//     const warehouses = getSimplifiedRouting(item);
-//     const closest = findClosestWarehouse(warehouses, destCoords);
-
-//     if (!itemsByOrigin.has(closest)) {
-//       itemsByOrigin.set(closest, {
-//         origin: ORIGIN_ADDRESSES[closest],
-//         originKey: closest,
-//         items: [],
-//         totalWeight: 0,
-//         perItemWeight: 0,
-//       });
-//     }
-
-//     const group = itemsByOrigin.get(closest)!;
-//     const weight = Number(item.grams / 453.592);
-//     const quantity = item.quantity || 1;
-//     group.items.push(item);
-//     group.totalWeight += weight * quantity;
-//   }
-
-//   return itemsByOrigin;
-// }
 function quickWarehouseSelection(
   items: any[],
   destCoords: { lat: number; lng: number },
@@ -2330,10 +2278,8 @@ function quickWarehouseSelection(
     };
 
     for (const info of itemRoutingInfo) {
-      const weight = info.weight;
-      const quantity = info.item.quantity || 1;
       group.items.push(info.item);
-      group.totalWeight += weight * quantity;
+      group.totalWeight += calculateItemTotalWeight(info.item);
     }
 
     itemsByOrigin.set(closest, group);
@@ -2357,10 +2303,8 @@ function quickWarehouseSelection(
     }
 
     const group = itemsByOrigin.get(closest)!;
-    const weight = info.weight;
-    const quantity = info.item.quantity || 1;
     group.items.push(info.item);
-    group.totalWeight += weight * quantity;
+    group.totalWeight += calculateItemTotalWeight(info.item);
   }
 
   return itemsByOrigin;
@@ -2651,6 +2595,78 @@ async function preprocessFedExPackagesFast(
   return packagesByOrigin;
 }
 
+// async function getFedExLTLRateFast(
+//   originKey: string,
+//   group: ItemGroup,
+//   destination: any,
+// ): Promise<any> {
+//   const startTime = Date.now();
+
+//   try {
+//     const adjustedTotalWeight = group.totalWeight;
+//     const config = optimizeMultiPalletConfiguration(adjustedTotalWeight);
+
+//     const fedexLTLClient = new FedExLTLClient();
+
+//     // Convert to LTL freight items
+//     const ltlItems = fedexLTLClient.convertToLTLFreightItems(
+//       group.totalWeight,
+//       config.palletsNeeded,
+//       config.weightPerPallet,
+//       config.freightClass,
+//       PALLET_WEIGHT_LBS,
+//     );
+
+//     console.log(`\n🟠 FedEx LTL Request for ${originKey}:`);
+//     console.log(`   Weight: ${config.totalWeightWithPallets} lbs`);
+//     console.log(`   Freight Class: ${config.freightClass}`);
+//     console.log(`   Pallets: ${config.palletsNeeded}`);
+
+//     const ltlStartTime = Date.now();
+
+//     const result = await Promise.race([
+//       fedexLTLClient.getLTLRate(
+//         group.origin,
+//         destination,
+//         ltlItems,
+//         config.totalWeightWithPallets,
+//       ),
+//       new Promise<null>((_, reject) =>
+//         setTimeout(
+//           () => reject(new Error("FedEx LTL timeout")),
+//           FEDEX_LTL_TIMEOUT,
+//         ),
+//       ),
+//     ]);
+
+//     const ltlResponseTime = Date.now() - ltlStartTime;
+//     console.log(
+//       `🟠 FedEx LTL API response time for ${originKey}: ${ltlResponseTime}ms`,
+//     );
+
+//     if (!result || !result.rate) {
+//       console.warn(`⚠️ FedEx LTL ${originKey}: No rate returned`);
+//       return null;
+//     }
+
+//     console.log(
+//       `✅ FedEx LTL ${originKey}: $${result.rate} (${Date.now() - startTime}ms)`,
+//     );
+
+//     return {
+//       originKey,
+//       rate: result.rate,
+//       transitDays: result.transitDays,
+//       weight: result.totalWeight,
+//       palletsNeeded: result.palletsNeeded,
+//       serviceLevel: result.serviceLevel,
+//     };
+//   } catch (error: any) {
+//     console.warn(`⚠️ FedEx LTL ${originKey} failed: ${error.message}`);
+//     return null;
+//   }
+// }
+
 async function getFedExLTLRateFast(
   originKey: string,
   group: ItemGroup,
@@ -2716,6 +2732,7 @@ async function getFedExLTLRateFast(
       weight: result.totalWeight,
       palletsNeeded: result.palletsNeeded,
       serviceLevel: result.serviceLevel,
+      isFedExLTL: true, // ✅ explicit flag instead of string check
     };
   } catch (error: any) {
     console.warn(`⚠️ FedEx LTL ${originKey} failed: ${error.message}`);
@@ -2735,11 +2752,15 @@ async function getSEFLRateFast(
   const startTime = Date.now();
 
   try {
-    const adjustedTotalWeight = group.totalWeight + PALLET_WEIGHT_LBS;
+    const adjustedTotalWeight = group.totalWeight;
     const config = optimizeMultiPalletConfiguration(adjustedTotalWeight);
 
-    const seflWeight = adjustedTotalWeight;
+    const seflWeight = config.totalWeightWithPallets;
     const freightClass = parseInt(config.freightClass);
+    const units = config.palletsNeeded;
+    
+    const cubicFtPerUnit = (48 * 40 * FIXED_PALLET_HEIGHT_IN) / 1728;
+    const totalCubicFt = cubicFtPerUnit * units;
 
     // ✅ CRITICAL FIX: Properly configured SEFL client
     const seflClient = new SEFLClient({
@@ -2781,10 +2802,12 @@ async function getSEFLRateFast(
         terms: "P",
         freightClass: freightClass,
         weight: seflWeight,
-        units: 1,
+        // units: 1,
+        units,
         length: 48,
         width: 40,
         height: FIXED_PALLET_HEIGHT_IN,
+        cubicFeet: totalCubicFt,
         packageType: "PLT",
         chkLAP: "on",
         chkLGD: "on",
@@ -3062,19 +3085,29 @@ export async function POST(request: NextRequest) {
 
     // 3. SEFL calls in parallel
     const SEFL_SUPPORTED_ORIGINS = ["RLX"];
-    const seflCalls = Array.from(itemsByOrigin.entries())
-      .filter(([originKey]) => {
-        if (!SEFL_SUPPORTED_ORIGINS.includes(originKey)) {
-          console.log(
-            `⏭️ Skipping SEFL for ${originKey} — outside SEFL Southeast network`,
-          );
-          return false;
-        }
-        return true;
-      })
-      .map(([originKey, group]) =>
-        getSEFLRateFast(originKey, group, destination),
+    const isSingleRLXShipment =
+      itemsByOrigin.size === 1 && itemsByOrigin.has("RLX");
+    const seflCalls = isSingleRLXShipment
+      ? Array.from(itemsByOrigin.entries())
+          // .filter(([originKey]) => {
+          //   if (!SEFL_SUPPORTED_ORIGINS.includes(originKey)) {
+          //     console.log(
+          //       `⏭️ Skipping SEFL for ${originKey} — outside SEFL Southeast network`,
+          //     );
+          //     return false;
+          //   }
+          //   return true;
+          // })
+          .map(([originKey, group]) =>
+            getSEFLRateFast(originKey, group, destination),
+          )
+      : [];
+
+    if (!isSingleRLXShipment) {
+      console.log(
+        `⏭️ Skipping SEFL — split shipment across multiple warehouses`,
       );
+    }
     ratePromises.push(...seflCalls);
 
     // =====================================================
@@ -3111,7 +3144,7 @@ export async function POST(request: NextRequest) {
         } else if (result.value.quoteNumber) {
           // SEFL result (has quoteNumber)
           seflRates.push(result.value);
-        } else if (result.value.serviceLevel?.includes("FREIGHT")) {
+        } else if (result.value.isFedExLTL) {
           // FedEx LTL result (NEW)
           fedexLTLRates.push(result.value);
         } else if (result.value.rate) {

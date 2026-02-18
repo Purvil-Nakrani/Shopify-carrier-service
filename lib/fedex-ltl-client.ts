@@ -863,7 +863,10 @@ export class FedExLTLClient {
             },
             paymentType: "SENDER",
           },
-          shipDateStamp: "2026-02-18",
+          // shipDateStamp: "2026-02-18",
+          shipDateStamp: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
+            .toISOString()
+            .split("T")[0],
           requestedPackageLineItems: [
             {
               subPackagingType: "PALLET",
@@ -957,7 +960,8 @@ export class FedExLTLClient {
               amount: "100",
               currency: "USD",
             },
-            totalHandlingUnits: ltlItems.reduce((sum, _) => sum + 1, 0),
+            // totalHandlingUnits: ltlItems.reduce((sum, _) => sum + 1, 0),
+            totalHandlingUnits: ltlItems.length,
             alternateBillingParty: {
               accountNumber: {
                 value: "210034063",
@@ -1169,8 +1173,18 @@ export class FedExLTLClient {
       //   JSON.stringify(response.data, null, 2),
       // );
 
-      const reply = response.data.output.rateReplyDetails[0];
-      const shipment = reply.ratedShipmentDetails[0];
+      // const reply = response.data.output.rateReplyDetails[0];
+      // const shipment = reply.ratedShipmentDetails[0];
+      const rateReplyDetails = response.data?.output?.rateReplyDetails;
+      if (!rateReplyDetails || rateReplyDetails.length === 0) {
+        throw new Error("FedEx LTL: No rate reply details in response");
+      }
+      const reply = rateReplyDetails[0];
+      const shipment = reply?.ratedShipmentDetails?.[0];
+      if (!shipment?.totalNetFedExCharge) {
+        throw new Error("FedEx LTL: No charge in rate reply");
+      }
+      
       const transitDays = this.extractTransitDays(reply);
 
       console.log(

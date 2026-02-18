@@ -176,8 +176,10 @@ class SEFLClient {
     data: ShipmentData & { freightClass: number },
   ): Promise<string> {
     const pickupDate = this.parsePickupDate(data.pickupDate);
-    const cubicFeet =
-      data.cubicFeet || (data.length * data.width * data.height) / 1728;
+    // const cubicFeet =
+    //   data.cubicFeet || (data.length * data.width * data.height) / 1728;
+    const cubicFeetPerUnit = (data.length * data.width * data.height) / 1728;
+    const cubicFeet = data.cubicFeet || cubicFeetPerUnit * data.units;
 
     const params = new URLSearchParams({
       CustomerAccount: this.config.customerAccount,
@@ -204,7 +206,7 @@ class SEFLClient {
       DestinationZip: data.destination.zip,
       DestCountry: data.destination.country || "US",
       Class1: data.freightClass.toString(),
-      Weight1: data.weight.toString(),
+      Weight1: Math.floor(data.weight).toString(),
       WeightUnitOfMeasure1: "LBS",
       CubicFt1: cubicFeet.toFixed(2),
       Description1: data.description || "General Freight",
