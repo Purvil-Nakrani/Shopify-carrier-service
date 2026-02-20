@@ -3542,32 +3542,32 @@ export async function POST(request: NextRequest) {
     const SEFL_SUPPORTED_ORIGINS = ["RLX"];
     const isSingleRLXShipment =
       itemsByOrigin.size === 1 && itemsByOrigin.has("RLX");
-    // const seflCalls = isSingleRLXShipment
-    //   ? Array.from(itemsByOrigin.entries())
-    //       .filter(([originKey]) => SEFL_SUPPORTED_ORIGINS.includes(originKey))
-    //       .map(([originKey, group]) =>
-    //         getSEFLRateFast(originKey, group, destination),
-    //       )
-    //   : [];
+    const seflCalls = isSingleRLXShipment
+      ? Array.from(itemsByOrigin.entries())
+          .filter(([originKey]) => SEFL_SUPPORTED_ORIGINS.includes(originKey))
+          .map(([originKey, group]) =>
+            getSEFLRateFast(originKey, group, destination),
+          )
+      : [];
 
-    const seflCalls = Array.from(itemsByOrigin.entries())
-      .filter(([originKey]) => {
-        if (!SEFL_SUPPORTED_ORIGINS.includes(originKey)) {
-          console.log(
-            `⏭️ Skipping SEFL for ${originKey} — outside SEFL Southeast network`,
-          );
-          return false;
-        }
-        return true;
-      })
-      .map(([originKey, group]) =>
-        getSEFLRateFast(originKey, group, destination).catch((err: any) => {
-          console.warn(
-            `⚠️ SEFL ${originKey} unhandled rejection: ${err?.message}`,
-          );
-          return null;
-        }),
-      );
+    // const seflCalls = Array.from(itemsByOrigin.entries())
+    //   .filter(([originKey]) => {
+    //     if (!SEFL_SUPPORTED_ORIGINS.includes(originKey)) {
+    //       console.log(
+    //         `⏭️ Skipping SEFL for ${originKey} — outside SEFL Southeast network`,
+    //       );
+    //       return false;
+    //     }
+    //     return true;
+    //   })
+    //   .map(([originKey, group]) =>
+    //     getSEFLRateFast(originKey, group, destination).catch((err: any) => {
+    //       console.warn(
+    //         `⚠️ SEFL ${originKey} unhandled rejection: ${err?.message}`,
+    //       );
+    //       return null;
+    //     }),
+    //   );
 
     if (!isSingleRLXShipment) {
       console.log(
