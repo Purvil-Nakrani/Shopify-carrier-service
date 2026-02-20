@@ -2384,7 +2384,7 @@ async function getWWEXRateFast(
 
   try {
     // const adjustedTotalWeight = group.totalWeight + PALLET_WEIGHT_LBS;
-    const adjustedTotalWeight = group.totalWeight;
+    const adjustedTotalWeight = Math.round(group.totalWeight);
 
     const config = optimizeMultiPalletConfiguration(adjustedTotalWeight);
     // const config = optimizeMultiPalletConfiguration(group.totalWeight);
@@ -2415,13 +2415,13 @@ async function getWWEXRateFast(
           height: { value: FIXED_PALLET_HEIGHT_IN, unit: "IN" },
         },
         // weight: { value: palletWeight, unit: "LB" },
-        weight: { value: totalPalletWeight, unit: "LB" },
+        weight: { value: Math.round(totalPalletWeight), unit: "LB" },
         shippedItemList: [
           {
             commodityClass: config.freightClass,
             isHazMat: false,
             // weight: { value: palletWeight, unit: "LB" },
-            weight: { value: totalPalletWeight, unit: "LB" },
+            weight: { value: Math.round(totalPalletWeight), unit: "LB" },
           },
         ],
       });
@@ -2660,13 +2660,13 @@ async function preprocessFedExPackagesFast(
 //       weight: result.totalWeight,
 //       palletsNeeded: result.palletsNeeded,
 //       serviceLevel: result.serviceLevel,
+//       isFedExLTL: true, // ✅ explicit flag instead of string check
 //     };
 //   } catch (error: any) {
 //     console.warn(`⚠️ FedEx LTL ${originKey} failed: ${error.message}`);
 //     return null;
 //   }
 // }
-
 async function getFedExLTLRateFast(
   originKey: string,
   group: ItemGroup,
@@ -2680,7 +2680,6 @@ async function getFedExLTLRateFast(
 
     const fedexLTLClient = new FedExLTLClient();
 
-    // Convert to LTL freight items
     const ltlItems = fedexLTLClient.convertToLTLFreightItems(
       group.totalWeight,
       config.palletsNeeded,
@@ -2695,47 +2694,159 @@ async function getFedExLTLRateFast(
     console.log(`   Pallets: ${config.palletsNeeded}`);
 
     const ltlStartTime = Date.now();
+    let ltlResult: any = null;
+    let ltlError: string | null = null;
 
-    const result = await Promise.race([
-      fedexLTLClient.getLTLRate(
-        group.origin,
-        destination,
-        ltlItems,
-        config.totalWeightWithPallets,
-      ),
-      new Promise<null>((_, reject) =>
-        setTimeout(
-          () => reject(new Error("FedEx LTL timeout")),
-          FEDEX_LTL_TIMEOUT,
+    try {
+      ltlResult = await Promise.race([
+        fedexLTLClient.getLTLRate(
+          group.origin,
+          destination,
+          ltlItems,
+          config.totalWeightWithPallets,
         ),
-      ),
-    ]);
+        new Promise<null>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("FedEx LTL global timeout")),
+            FEDEX_LTL_TIMEOUT,
+          ),
+        ),
+      ]);
+    } catch (innerError: any) {
+      ltlError = innerError?.message || "Unknown FedEx LTL error";
+    }
 
     const ltlResponseTime = Date.now() - ltlStartTime;
     console.log(
       `🟠 FedEx LTL API response time for ${originKey}: ${ltlResponseTime}ms`,
     );
 
-    if (!result || !result.rate) {
+    // ✅ Detect FedEx LTL-side errors
+    const isFedExLTLTimeout =
+      ltlError &&
+      (ltlError.includes("timeout") ||
+        ltlError.includes("ECONNABORTED") ||
+        ltlError.includes("ECONNREFUSED") ||
+        ltlError.includes("No response") ||
+        ltlError.includes("socket hang up"));
+
+    const isFedExLTLApiError =
+      ltlError &&
+      (ltlError.includes("status 4") || // 4xx
+        ltlError.includes("status 5") || // 5xx
+        ltlError.includes("Unauthorized") ||
+        ltlError.includes("authentication") ||
+        ltlError.includes("rate limit"));
+
+    if (isFedExLTLTimeout) {
+      console.warn(
+        `⏱️ FedEx LTL ${originKey}: Timeout on FedEx side (${ltlResponseTime}ms)`,
+      );
+
+      await logError(
+        `FEDEX_LTL_BACKEND_TIMEOUT_${originKey}`,
+        ltlError!,
+        undefined,
+        {
+          origin: originKey,
+          responseTimeMs: ltlResponseTime,
+          weight: config.totalWeightWithPallets,
+          freightClass: config.freightClass,
+          palletsNeeded: config.palletsNeeded,
+          originCity: group.origin.locality,
+          originState: group.origin.region,
+          destinationCity: destination.city,
+          destinationState: destination.province,
+          reason: "FedEx LTL API did not respond within timeout — their side",
+        },
+      );
+
+      return null;
+    }
+
+    if (isFedExLTLApiError) {
+      console.warn(`🔴 FedEx LTL ${originKey}: API error — ${ltlError}`);
+
+      await logError(`FEDEX_LTL_API_ERROR_${originKey}`, ltlError!, undefined, {
+        origin: originKey,
+        responseTimeMs: ltlResponseTime,
+        weight: config.totalWeightWithPallets,
+        freightClass: config.freightClass,
+        palletsNeeded: config.palletsNeeded,
+        originCity: group.origin.locality,
+        originState: group.origin.region,
+        destinationCity: destination.city,
+        destinationState: destination.province,
+        reason: "FedEx LTL API returned an error response",
+      });
+
+      return null;
+    }
+
+    // Other/unknown errors
+    if (ltlError) {
+      console.warn(`⚠️ FedEx LTL ${originKey} failed: ${ltlError}`);
+
+      await logError(
+        `FEDEX_LTL_UNKNOWN_ERROR_${originKey}`,
+        ltlError,
+        undefined,
+        {
+          origin: originKey,
+          responseTimeMs: ltlResponseTime,
+          weight: config.totalWeightWithPallets,
+          reason: "FedEx LTL unknown error",
+        },
+      );
+
+      return null;
+    }
+
+    if (!ltlResult || !ltlResult.rate) {
       console.warn(`⚠️ FedEx LTL ${originKey}: No rate returned`);
+
+      await logError(
+        `FEDEX_LTL_NO_RATE_${originKey}`,
+        "No rate returned from FedEx LTL",
+        undefined,
+        {
+          origin: originKey,
+          responseTimeMs: ltlResponseTime,
+          weight: config.totalWeightWithPallets,
+          freightClass: config.freightClass,
+          reason: "FedEx LTL responded successfully but returned no rate",
+        },
+      );
+
       return null;
     }
 
     console.log(
-      `✅ FedEx LTL ${originKey}: $${result.rate} (${Date.now() - startTime}ms)`,
+      `✅ FedEx LTL ${originKey}: $${ltlResult.rate} (${Date.now() - startTime}ms)`,
     );
 
     return {
       originKey,
-      rate: result.rate,
-      transitDays: result.transitDays,
-      weight: result.totalWeight,
-      palletsNeeded: result.palletsNeeded,
-      serviceLevel: result.serviceLevel,
-      isFedExLTL: true, // ✅ explicit flag instead of string check
+      rate: ltlResult.rate,
+      transitDays: ltlResult.transitDays,
+      weight: ltlResult.totalWeight,
+      palletsNeeded: ltlResult.palletsNeeded,
+      serviceLevel: ltlResult.serviceLevel,
+      isFedExLTL: true,
     };
   } catch (error: any) {
-    console.warn(`⚠️ FedEx LTL ${originKey} failed: ${error.message}`);
+    console.error(`🔴 FedEx LTL ${originKey} outer catch: ${error.message}`);
+
+    await logError(
+      `FEDEX_LTL_OUTER_CATCH_${originKey}`,
+      error.message,
+      error.stack,
+      {
+        origin: originKey,
+        reason: "Unhandled exception in getFedExLTLRateFast",
+      },
+    );
+
     return null;
   }
 }
@@ -2744,6 +2855,111 @@ async function getFedExLTLRateFast(
 // SEFL RATE - OPTIMIZED WITH PROPER CONFIG
 // =====================================================
 
+// async function getSEFLRateFast(
+//   originKey: string,
+//   group: ItemGroup,
+//   destination: any,
+// ): Promise<any> {
+//   const startTime = Date.now();
+
+//   try {
+//     const adjustedTotalWeight = group.totalWeight;
+//     const config = optimizeMultiPalletConfiguration(adjustedTotalWeight);
+
+//     const seflWeight = config.totalWeightWithPallets;
+//     const freightClass = parseInt(config.freightClass);
+//     const units = config.palletsNeeded;
+
+//     const cubicFtPerUnit = (48 * 40 * FIXED_PALLET_HEIGHT_IN) / 1728;
+//     const totalCubicFt = cubicFtPerUnit * units;
+
+//     // ✅ CRITICAL FIX: Properly configured SEFL client
+//     const seflClient = new SEFLClient({
+//       username: process.env.SEFL_USERNAME || "",
+//       password: process.env.SEFL_PASSWORD || "",
+//       customerAccount: process.env.SEFL_CUSTOMER_ACCOUNT || "",
+//       customerName: "ELITE FLOOR SUPPLY",
+//       customerStreet: "STAFFORD",
+//       customerCity: "STAFFORD",
+//       customerState: "TX",
+//       customerZip: "77477",
+//       emailAddress: "nabit@sasbrandsloop.com",
+//       maxRetries: SEFL_MAX_RETRIES,
+//       retryDelay: SEFL_RETRY_DELAY,
+//       timeout: SEFL_TIMEOUT,
+//     });
+
+//     console.log(`\n🟣 SEFL Request for ${originKey}:`);
+//     console.log(`   Weight: ${seflWeight} lbs`);
+//     console.log(`   Freight Class: ${freightClass}`);
+//     console.log(`   Origin: ${group.origin.locality}, ${group.origin.region}`);
+//     console.log(`   Destination: ${destination.city}, ${destination.province}`);
+
+//     const seflStartTime = Date.now();
+
+//     const result = await Promise.race([
+//       seflClient
+//         .getShippingRate({
+//           origin: {
+//             zip: group.origin.postalCode,
+//             city: group.origin.locality,
+//             state: group.origin.region,
+//           },
+//           destination: {
+//             zip: destination.postal_code || "",
+//             city: destination.city || "",
+//             state: destination.province || "",
+//           },
+//           pickupDate: new Date(),
+//           terms: "P",
+//           freightClass: freightClass,
+//           weight: seflWeight,
+//           // units: 1,
+//           units,
+//           length: 48,
+//           width: 40,
+//           height: FIXED_PALLET_HEIGHT_IN,
+//           cubicFeet: totalCubicFt,
+//           packageType: "PLT",
+//           chkLAP: "on",
+//           chkLGD: "on",
+//           chkAN: "on",
+//         })
+//         .catch(() => null),
+//       new Promise<null>((_, reject) =>
+//         setTimeout(() => reject(new Error("SEFL timeout")), SEFL_TIMEOUT),
+//       ),
+//     ]);
+
+//     const seflResponseTime = Date.now() - seflStartTime;
+//     console.log(
+//       `🟣 SEFL API response time for ${originKey}: ${seflResponseTime}ms`,
+//     );
+
+//     if (!result || !result.success || !result.rate) {
+//       console.warn(`⚠️ SEFL ${originKey}: No rate returned`);
+//       return null;
+//     }
+
+//     const seflRate = result.rate;
+//     const transitDays = result.transitDays || 5;
+
+//     console.log(
+//       `✅ SEFL ${originKey}: $${seflRate} (${Date.now() - startTime}ms)`,
+//     );
+
+//     return {
+//       originKey,
+//       rate: seflRate * 1.15, // 15% markup
+//       transitDays,
+//       weight: seflWeight,
+//       quoteNumber: result.quoteNumber,
+//     };
+//   } catch (error: any) {
+//     console.warn(`⚠️ SEFL ${originKey} failed: ${error.message}`);
+//     return null;
+//   }
+// }
 async function getSEFLRateFast(
   originKey: string,
   group: ItemGroup,
@@ -2754,15 +2970,12 @@ async function getSEFLRateFast(
   try {
     const adjustedTotalWeight = group.totalWeight;
     const config = optimizeMultiPalletConfiguration(adjustedTotalWeight);
-
     const seflWeight = config.totalWeightWithPallets;
     const freightClass = parseInt(config.freightClass);
     const units = config.palletsNeeded;
-    
     const cubicFtPerUnit = (48 * 40 * FIXED_PALLET_HEIGHT_IN) / 1728;
     const totalCubicFt = cubicFtPerUnit * units;
 
-    // ✅ CRITICAL FIX: Properly configured SEFL client
     const seflClient = new SEFLClient({
       username: process.env.SEFL_USERNAME || "",
       password: process.env.SEFL_PASSWORD || "",
@@ -2778,72 +2991,112 @@ async function getSEFLRateFast(
       timeout: SEFL_TIMEOUT,
     });
 
-    console.log(`\n🟣 SEFL Request for ${originKey}:`);
-    console.log(`   Weight: ${seflWeight} lbs`);
-    console.log(`   Freight Class: ${freightClass}`);
-    console.log(`   Origin: ${group.origin.locality}, ${group.origin.region}`);
-    console.log(`   Destination: ${destination.city}, ${destination.province}`);
-
     const seflStartTime = Date.now();
 
-    const result = await Promise.race([
-      seflClient.getShippingRate({
-        origin: {
-          zip: group.origin.postalCode,
-          city: group.origin.locality,
-          state: group.origin.region,
-        },
-        destination: {
-          zip: destination.postal_code || "",
-          city: destination.city || "",
-          state: destination.province || "",
-        },
-        pickupDate: new Date(),
-        terms: "P",
-        freightClass: freightClass,
-        weight: seflWeight,
-        // units: 1,
-        units,
-        length: 48,
-        width: 40,
-        height: FIXED_PALLET_HEIGHT_IN,
-        cubicFeet: totalCubicFt,
-        packageType: "PLT",
-        chkLAP: "on",
-        chkLGD: "on",
-        chkAN: "on",
-      }),
-      new Promise<null>((_, reject) =>
-        setTimeout(() => reject(new Error("SEFL timeout")), SEFL_TIMEOUT),
-      ),
-    ]);
+    let seflResult: any = null;
+    let seflError: string | null = null;
+
+    try {
+      seflResult = await Promise.race([
+        seflClient.getShippingRate({
+          origin: {
+            zip: group.origin.postalCode,
+            city: group.origin.locality,
+            state: group.origin.region,
+          },
+          destination: {
+            zip: destination.postal_code || "",
+            city: destination.city || "",
+            state: destination.province || "",
+          },
+          pickupDate: new Date(),
+          terms: "P",
+          freightClass,
+          weight: seflWeight,
+          units,
+          length: 48,
+          width: 40,
+          height: FIXED_PALLET_HEIGHT_IN,
+          cubicFeet: totalCubicFt,
+          packageType: "PLT",
+          chkLAP: "on",
+          chkLGD: "on",
+          chkAN: "on",
+        }),
+        new Promise<null>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("SEFL global timeout")),
+            SEFL_TIMEOUT,
+          ),
+        ),
+      ]);
+    } catch (innerError: any) {
+      seflError = innerError?.message || "Unknown SEFL error";
+    }
 
     const seflResponseTime = Date.now() - seflStartTime;
     console.log(
       `🟣 SEFL API response time for ${originKey}: ${seflResponseTime}ms`,
     );
 
-    if (!result || !result.success || !result.rate) {
+    // ✅ Detect SEFL-side timeout (their server didn't respond in time)
+    const isSeflSideTimeout =
+      seflError &&
+      (seflError.includes("SEFL request timeout") ||
+        seflError.includes("Timeout fetching SEFL quote") ||
+        seflError.includes("still not ready after") ||
+        seflError.includes("No response from SEFL API"));
+
+    if (isSeflSideTimeout) {
+      console.warn(
+        `⏱️ SEFL ${originKey}: Timeout on SEFL's side (${seflResponseTime}ms)`,
+      );
+
+      // 🔴 Log to DB — SEFL backend was slow/unresponsive
+      await logError(
+        `SEFL_BACKEND_TIMEOUT_${originKey}`,
+        seflError!,
+        undefined,
+        {
+          origin: originKey,
+          responseTimeMs: seflResponseTime,
+          weight: seflWeight,
+          freightClass,
+          originCity: group.origin.locality,
+          originState: group.origin.region,
+          destinationCity: destination.city,
+          destinationState: destination.province,
+          reason: "SEFL API did not respond within timeout — their side",
+        },
+      );
+
+      return null;
+    }
+
+    // Other errors (config, network, etc.)
+    if (seflError) {
+      console.warn(`⚠️ SEFL ${originKey} failed: ${seflError}`);
+      return null;
+    }
+
+    if (!seflResult || !seflResult.success || !seflResult.rate) {
       console.warn(`⚠️ SEFL ${originKey}: No rate returned`);
       return null;
     }
 
-    const seflRate = result.rate;
-    const transitDays = result.transitDays || 5;
-
     console.log(
-      `✅ SEFL ${originKey}: $${seflRate} (${Date.now() - startTime}ms)`,
+      `✅ SEFL ${originKey}: $${seflResult.rate} (${Date.now() - startTime}ms)`,
     );
 
     return {
       originKey,
-      rate: seflRate * 1.15, // 15% markup
-      transitDays,
+      rate: seflResult.rate * 1.15,
+      transitDays: seflResult.transitDays || 5,
       weight: seflWeight,
-      quoteNumber: result.quoteNumber,
+      quoteNumber: seflResult.quoteNumber,
     };
   } catch (error: any) {
-    console.warn(`⚠️ SEFL ${originKey} failed: ${error.message}`);
+    console.warn(`⚠️ SEFL ${originKey} outer catch: ${error.message}`);
     return null;
   }
 }
@@ -2993,8 +3246,81 @@ export async function POST(request: NextRequest) {
     );
 
     // if (maxPerItemWeight <= 150 && totalWeight <= 750) {
+    // if (shouldCallFedEx) {
+    //   // Pre-process packages ONCE
+    //   const packagesByOriginPromise =
+    //     preprocessFedExPackagesFast(itemsByOrigin);
+
+    //   ratePromises.push(
+    //     (async () => {
+    //       try {
+    //         const packagesByOrigin = await Promise.race([
+    //           packagesByOriginPromise,
+    //           new Promise<null>((_, reject) =>
+    //             setTimeout(() => reject(new Error("FedEx prep timeout")), 2000),
+    //           ),
+    //         ]);
+
+    //         if (!packagesByOrigin) return null;
+
+    //         // Call FedEx for each origin in parallel
+    //         const fedexClient = new FedExClient();
+    //         const fedexCalls = Array.from(itemsByOrigin.entries()).map(
+    //           ([originKey, group]) =>
+    //             (async () => {
+    //               try {
+    //                 const packages = packagesByOrigin.get(originKey);
+    //                 if (!packages) return null;
+
+    //                 const shipperAddress = {
+    //                   streetLines: group.origin.addressLineList.filter(Boolean),
+    //                   city: group.origin.locality,
+    //                   stateOrProvinceCode: group.origin.region,
+    //                   postalCode: group.origin.postalCode,
+    //                   countryCode: group.origin.countryCode,
+    //                   residential: false,
+    //                 };
+
+    //                 const fedexRate = await Promise.race([
+    //                   fedexClient.getRateForOrigin(
+    //                     destination,
+    //                     packages,
+    //                     shipperAddress,
+    //                   ),
+    //                   new Promise<null>((_, reject) =>
+    //                     setTimeout(
+    //                       () => reject(new Error("FedEx timeout")),
+    //                       FEDEX_TIMEOUT,
+    //                     ),
+    //                   ),
+    //                 ]);
+
+    //                 return fedexRate
+    //                   ? {
+    //                       service_code: "FEDEX_SMALL_PARCEL",
+    //                       originKey,
+    //                       rate: fedexRate.rate,
+    //                       transitDays: fedexRate.transitDays,
+    //                     }
+    //                   : null;
+    //               } catch (err) {
+    //                 console.warn(`⚠️ FedEx ${originKey} failed`);
+    //                 return null;
+    //               }
+    //             })(),
+    //         );
+
+    //         const results = await Promise.all(fedexCalls);
+    //         return results.filter(Boolean);
+    //       } catch (err) {
+    //         console.warn("⚠️ FedEx failed:", err);
+    //         return null;
+    //       }
+    //     })(),
+    //   );
+    // }
+
     if (shouldCallFedEx) {
-      // Pre-process packages ONCE
       const packagesByOriginPromise =
         preprocessFedExPackagesFast(itemsByOrigin);
 
@@ -3010,11 +3336,14 @@ export async function POST(request: NextRequest) {
 
             if (!packagesByOrigin) return null;
 
-            // Call FedEx for each origin in parallel
             const fedexClient = new FedExClient();
             const fedexCalls = Array.from(itemsByOrigin.entries()).map(
               ([originKey, group]) =>
                 (async () => {
+                  const fedexStartTime = Date.now();
+                  let fedexError: string | null = null;
+                  let fedexRate: any = null;
+
                   try {
                     const packages = packagesByOrigin.get(originKey);
                     if (!packages) return null;
@@ -3028,30 +3357,151 @@ export async function POST(request: NextRequest) {
                       residential: false,
                     };
 
-                    const fedexRate = await Promise.race([
-                      fedexClient.getRateForOrigin(
-                        destination,
-                        packages,
-                        shipperAddress,
-                      ),
-                      new Promise<null>((_, reject) =>
-                        setTimeout(
-                          () => reject(new Error("FedEx timeout")),
-                          FEDEX_TIMEOUT,
+                    try {
+                      fedexRate = await Promise.race([
+                        fedexClient.getRateForOrigin(
+                          destination,
+                          packages,
+                          shipperAddress,
                         ),
-                      ),
-                    ]);
+                        new Promise<null>((_, reject) =>
+                          setTimeout(
+                            () => reject(new Error("FedEx parcel timeout")),
+                            FEDEX_TIMEOUT,
+                          ),
+                        ),
+                      ]);
+                    } catch (innerError: any) {
+                      fedexError = innerError?.message || "Unknown FedEx error";
+                    }
 
-                    return fedexRate
-                      ? {
-                          service_code: "FEDEX_SMALL_PARCEL",
-                          originKey,
-                          rate: fedexRate.rate,
-                          transitDays: fedexRate.transitDays,
-                        }
-                      : null;
-                  } catch (err) {
-                    console.warn(`⚠️ FedEx ${originKey} failed`);
+                    const fedexResponseTime = Date.now() - fedexStartTime;
+
+                    const isFedExTimeout =
+                      fedexError &&
+                      (fedexError.includes("timeout") ||
+                        fedexError.includes("ECONNABORTED") ||
+                        fedexError.includes("ECONNREFUSED") ||
+                        fedexError.includes("socket hang up"));
+
+                    const isFedExApiError =
+                      fedexError &&
+                      (fedexError.includes("status 4") ||
+                        fedexError.includes("status 5") ||
+                        fedexError.includes("Unauthorized") ||
+                        fedexError.includes("authentication") ||
+                        fedexError.includes("rate limit"));
+
+                    if (isFedExTimeout) {
+                      console.warn(
+                        `⏱️ FedEx parcel ${originKey}: Timeout on FedEx side (${fedexResponseTime}ms)`,
+                      );
+
+                      await logError(
+                        `FEDEX_PARCEL_BACKEND_TIMEOUT_${originKey}`,
+                        fedexError!,
+                        undefined,
+                        {
+                          origin: originKey,
+                          responseTimeMs: fedexResponseTime,
+                          packageCount: packages.length,
+                          originCity: group.origin.locality,
+                          originState: group.origin.region,
+                          destinationCity: destination.city,
+                          destinationState: destination.province,
+                          reason:
+                            "FedEx parcel API did not respond within timeout — their side",
+                        },
+                      );
+
+                      return null;
+                    }
+
+                    if (isFedExApiError) {
+                      console.warn(
+                        `🔴 FedEx parcel ${originKey}: API error — ${fedexError}`,
+                      );
+
+                      await logError(
+                        `FEDEX_PARCEL_API_ERROR_${originKey}`,
+                        fedexError!,
+                        undefined,
+                        {
+                          origin: originKey,
+                          responseTimeMs: fedexResponseTime,
+                          packageCount: packages.length,
+                          originCity: group.origin.locality,
+                          originState: group.origin.region,
+                          destinationCity: destination.city,
+                          destinationState: destination.province,
+                          reason: "FedEx parcel API returned an error response",
+                        },
+                      );
+
+                      return null;
+                    }
+
+                    if (fedexError) {
+                      console.warn(
+                        `⚠️ FedEx parcel ${originKey} unknown error: ${fedexError}`,
+                      );
+
+                      await logError(
+                        `FEDEX_PARCEL_UNKNOWN_ERROR_${originKey}`,
+                        fedexError,
+                        undefined,
+                        {
+                          origin: originKey,
+                          responseTimeMs: fedexResponseTime,
+                          reason: "FedEx parcel unknown error",
+                        },
+                      );
+
+                      return null;
+                    }
+
+                    if (!fedexRate) {
+                      console.warn(
+                        `⚠️ FedEx parcel ${originKey}: No rate returned`,
+                      );
+
+                      await logError(
+                        `FEDEX_PARCEL_NO_RATE_${originKey}`,
+                        "No rate returned from FedEx parcel",
+                        undefined,
+                        {
+                          origin: originKey,
+                          responseTimeMs: fedexResponseTime,
+                          packageCount: packages.length,
+                          reason:
+                            "FedEx responded successfully but returned no rate",
+                        },
+                      );
+
+                      return null;
+                    }
+
+                    return {
+                      service_code: "FEDEX_SMALL_PARCEL",
+                      originKey,
+                      rate: fedexRate.rate,
+                      transitDays: fedexRate.transitDays,
+                    };
+                  } catch (outerError: any) {
+                    console.error(
+                      `🔴 FedEx parcel ${originKey} outer catch: ${outerError.message}`,
+                    );
+
+                    await logError(
+                      `FEDEX_PARCEL_OUTER_CATCH_${originKey}`,
+                      outerError.message,
+                      outerError.stack,
+                      {
+                        origin: originKey,
+                        reason: "Unhandled exception in FedEx parcel call",
+                      },
+                    );
+
                     return null;
                   }
                 })(),
@@ -3059,8 +3509,13 @@ export async function POST(request: NextRequest) {
 
             const results = await Promise.all(fedexCalls);
             return results.filter(Boolean);
-          } catch (err) {
-            console.warn("⚠️ FedEx failed:", err);
+          } catch (err: any) {
+            console.warn("⚠️ FedEx prep failed:", err?.message);
+
+            await logError("FEDEX_PREP_ERROR", err?.message, err?.stack, {
+              reason: "Failed during FedEx package preprocessing",
+            });
+
             return null;
           }
         })(),
@@ -3087,21 +3542,32 @@ export async function POST(request: NextRequest) {
     const SEFL_SUPPORTED_ORIGINS = ["RLX"];
     const isSingleRLXShipment =
       itemsByOrigin.size === 1 && itemsByOrigin.has("RLX");
-    const seflCalls = isSingleRLXShipment
-      ? Array.from(itemsByOrigin.entries())
-          // .filter(([originKey]) => {
-          //   if (!SEFL_SUPPORTED_ORIGINS.includes(originKey)) {
-          //     console.log(
-          //       `⏭️ Skipping SEFL for ${originKey} — outside SEFL Southeast network`,
-          //     );
-          //     return false;
-          //   }
-          //   return true;
-          // })
-          .map(([originKey, group]) =>
-            getSEFLRateFast(originKey, group, destination),
-          )
-      : [];
+    // const seflCalls = isSingleRLXShipment
+    //   ? Array.from(itemsByOrigin.entries())
+    //       .filter(([originKey]) => SEFL_SUPPORTED_ORIGINS.includes(originKey))
+    //       .map(([originKey, group]) =>
+    //         getSEFLRateFast(originKey, group, destination),
+    //       )
+    //   : [];
+
+    const seflCalls = Array.from(itemsByOrigin.entries())
+      .filter(([originKey]) => {
+        if (!SEFL_SUPPORTED_ORIGINS.includes(originKey)) {
+          console.log(
+            `⏭️ Skipping SEFL for ${originKey} — outside SEFL Southeast network`,
+          );
+          return false;
+        }
+        return true;
+      })
+      .map(([originKey, group]) =>
+        getSEFLRateFast(originKey, group, destination).catch((err: any) => {
+          console.warn(
+            `⚠️ SEFL ${originKey} unhandled rejection: ${err?.message}`,
+          );
+          return null;
+        }),
+      );
 
     if (!isSingleRLXShipment) {
       console.log(

@@ -86,6 +86,58 @@ class FastPackageConsolidator {
     return packages;
   }
 }
+// class FastPackageConsolidator {
+//   public consolidate(items: ProcessedItem[]): ConsolidatedPackage[] {
+//     const packages: ConsolidatedPackage[] = [];
+
+//     // Expand items by quantity
+//     const expandedItems: ProcessedItem[] = [];
+//     for (const item of items) {
+//       for (let i = 0; i < item.quantity; i++) {
+//         expandedItems.push({ ...item, quantity: 1 });
+//       }
+//     }
+
+//     // Group by type
+//     const rolls = expandedItems.filter(i => i.type === "ROLL");
+//     const mats = expandedItems.filter(i => i.type === "MAT");
+//     const tiles = expandedItems.filter(i => i.type === "TILE");
+
+//     // Pack each type separately
+//     const packGroup = (group: ProcessedItem[]) => {
+//       // Sort by weight descending within group
+//       group.sort((a, b) => b.weight - a.weight);
+
+//       for (const item of group) {
+//         let placed = false;
+
+//         for (const pkg of packages) {
+//           // Only pack into a package that has the same type
+//           const pkgType = pkg.items[0]?.type;
+//           if (pkgType === item.type && pkg.weight + item.weight <= 150) {
+//             pkg.weight += item.weight;
+//             pkg.items.push(item);
+//             placed = true;
+//             break;
+//           }
+//         }
+
+//         if (!placed) {
+//           packages.push({
+//             weight: item.weight,
+//             items: [item],
+//           });
+//         }
+//       }
+//     };
+
+//     packGroup(rolls);
+//     packGroup(mats);
+//     packGroup(tiles);
+
+//     return packages;
+//   }
+// }
 
 // =====================================================
 // MAIN FEDEX CLIENT
