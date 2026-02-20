@@ -168,7 +168,8 @@ class SEFLClient {
         details: quoteDetails,
       };
     } catch (error: any) {
-      return this.handleError(error);
+      this.handleError(error);
+      throw error;
     }
   }
 
