@@ -1588,7 +1588,7 @@ const WWEX_TIMEOUT = 13000; // 6 seconds for WWEX
 const SEFL_TIMEOUT = 9000; // 6 seconds for SEFL
 const SEFL_RETRY_DELAY = 1200; // 2 seconds between SEFL retries
 const SEFL_MAX_RETRIES = 2; // Maximum 2 retries
-const FEDEX_LTL_TIMEOUT = 5000;
+const FEDEX_LTL_TIMEOUT = 7000;
 
 // Minimum wait before returning results (if we get responses faster)
 const MIN_WAIT_FOR_FREIGHT = 5000; // Wait at least 5s for WWEX/SEFL
