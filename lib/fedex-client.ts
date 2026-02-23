@@ -324,7 +324,7 @@ export class FedExClient {
 
       // Calculate per-item weight correctly
       const isEmptyProperties =
-        !item.properties || Object.keys(item.properties).length === 0;
+        !item.properties || Object.keys(item.properties).length === 0 || item.name.includes("Acoustic Rubber Underlayment");
 
       let perItemWeight = 0;
       let quantity = 0;
