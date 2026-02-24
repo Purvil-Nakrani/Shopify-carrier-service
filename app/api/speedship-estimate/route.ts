@@ -1682,25 +1682,10 @@ export async function POST(request: NextRequest) {
         service_code: "FEDEX_SMALL_PARCEL",
         total_price: Math.round(totalFedEx * 100).toString(),
         currency: "USD",
-        description:
-          "Production time: 7–14 business days. Transit: 3-5 business days",
+        // description:
+        //   "Production time: 7–14 business days. Transit: 3-5 business days",
+        description: "Fast Production and Shipping",
       });
-    }
-
-    // 2. FedEx Freight LTL (if not eligible for small parcel and called)
-    if (!shouldCallFedEx && fedexLTLRates.length > 0) {
-      const totalFedExLTL = fedexLTLRates.reduce((sum, r) => sum + r.rate, 0);
-
-      rates.push({
-        service_name: "FedEx Freight LTL",
-        service_code: "FEDEX_FREIGHT_LTL",
-        total_price: Math.round(totalFedExLTL * 100).toString(),
-        currency: "USD",
-        description:
-          "Production time: 7–14 business days. Transit: 3-5 business days",
-      });
-
-      console.log(`✅ FedEx Freight LTL: $${totalFedExLTL.toFixed(2)}`);
     }
 
     // Compare WWEX vs SEFL and pick the lowest
@@ -1709,7 +1694,7 @@ export async function POST(request: NextRequest) {
     if (wwexRates.length > 0) {
       const totalWWEX = wwexRates.reduce((sum, r) => sum + r.rate, 0);
       freightRates.push({
-        service_name: "Speedship Freight",
+        service_name: "LTL Freight Shipping",
         service_code: "SPEEDSHIP_FREIGHT",
         rate: totalWWEX,
       });
@@ -1718,9 +1703,20 @@ export async function POST(request: NextRequest) {
     if (seflRates.length > 0) {
       const totalSEFL = seflRates.reduce((sum, r) => sum + r.rate, 0);
       freightRates.push({
-        service_name: "SEFL Freight",
+        service_name: "LTL Freight Shipping",
         service_code: "SEFL_FREIGHT",
         rate: totalSEFL,
+      });
+    }
+
+    //FedEx Freight LTL (if not eligible for small parcel and called)
+    if (!shouldCallFedEx && fedexLTLRates.length > 0) {
+      const totalFedExLTL = fedexLTLRates.reduce((sum, r) => sum + r.rate, 0);
+
+      freightRates.push({
+        service_name: "LTL Freight Shipping",
+        service_code: "FEDEX_FREIGHT_LTL",
+        total_price:totalFedExLTL,
       });
     }
 
@@ -1734,12 +1730,13 @@ export async function POST(request: NextRequest) {
         service_code: lowestFreight.service_code,
         total_price: Math.round(lowestFreight.rate * 100).toString(),
         currency: "USD",
-        description:
-          "Production time: 7–14 business days. Transit: 3-5 business days",
+        // description:
+        //   "Production time: 7–14 business days. Transit: 3-5 business days",
+        description: "Fast Production and Shipping",
       });
 
       console.log(
-        `\n🏆 LOWEST FREIGHT RATE: ${lowestFreight.service_name} - $${lowestFreight.rate.toFixed(2)}`,
+        `\n🏆 LOWEST FREIGHT RATE: ${lowestFreight.service_code} - $${lowestFreight.rate.toFixed(2)}`,
       );
     }
 
@@ -1751,8 +1748,9 @@ export async function POST(request: NextRequest) {
         service_code: "SPEEDSHIP_FREIGHT_ESTIMATED",
         total_price: Math.round(estimatedRate * 100).toString(),
         currency: "USD",
-        description:
-          "Production time: 7–14 business days. Transit: 3-5 business days",
+        // description:
+        //   "Production time: 7–14 business days. Transit: 3-5 business days",
+        description: "Fast Production and Shipping",
       });
     }
 
