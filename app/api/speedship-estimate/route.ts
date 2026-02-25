@@ -2048,6 +2048,7 @@ function findClosestWarehouse(
   let closest = warehouses[0];
   let minDist = Infinity;
 
+  console.log(`\n📍 Warehouse distances:`);
   for (const wh of warehouses) {
     const whCoords = ORIGIN_ADDRESSES[wh].coordinates;
     const dist = calculateDistance(
@@ -2056,6 +2057,7 @@ function findClosestWarehouse(
       whCoords.lat,
       whCoords.lng,
     );
+    console.log(`   ${wh}: ${dist.toFixed(0)} miles`);
     if (dist < minDist) {
       minDist = dist;
       closest = wh;
@@ -2219,7 +2221,7 @@ const PRODUCT_AVAILABILITY_MATRIX: Record<
     "8mm-BRIGHT_GREEN": { rlx: false, arc_az: true, arc_wi: true },
     "3/8-BRIGHT_GREEN": { rlx: false, arc_az: true, arc_wi: true },
     "1/2-BRIGHT_GREEN": { rlx: false, arc_az: true, arc_wi: true },
-    "3/4-BRIGHT_GREEN": { rlx: false, arc_az: true, arc_wi: true },
+    "3/4-BRIGHT_GREEN": { rlx: false, arc_az: false, arc_wi: false },
 
     // --- SILVER: AZ + WI (listed for both), not RLX ---
     "1/4-SILVER": { rlx: false, arc_az: true, arc_wi: true },
@@ -2228,7 +2230,7 @@ const PRODUCT_AVAILABILITY_MATRIX: Record<
     "1/2-SILVER": { rlx: false, arc_az: true, arc_wi: true },
     "3/4-SILVER": { rlx: false, arc_az: false, arc_wi: false },
 
-    // --- BLUE/SILVER (= BLUE_GRAY / BLUGRAY): WI only ---
+    // ---(BLUE_GRAY / BLUGRAY): WI only ---
     "1/4-BLUE_GRAY": { rlx: true, arc_az: false, arc_wi: false },
     "8mm-BLUE_GRAY": { rlx: true, arc_az: false, arc_wi: false },
     "3/8-BLUE_GRAY": { rlx: true, arc_az: false, arc_wi: false },
@@ -2240,6 +2242,13 @@ const PRODUCT_AVAILABILITY_MATRIX: Record<
     "1/2-BLUGRAY": { rlx: true, arc_az: false, arc_wi: false },
     "3/4-BLUGRAY": { rlx: true, arc_az: false, arc_wi: false },
 
+    //  --- BLUE_SILVER: AZ + WI (listed for both), not RLX ---
+    "1/4-BLUE_SILVER": { rlx: false, arc_az: true, arc_wi: true },
+    "8mm-BLUE_SILVER": { rlx: false, arc_az: true, arc_wi: true },
+    "3/8-BLUE_SILVER": { rlx: false, arc_az: true, arc_wi: true },
+    "1/2-BLUE_SILVER": { rlx: false, arc_az: true, arc_wi: true },
+    "3/4-BLUE_SILVER": { rlx: false, arc_az: false, arc_wi: false },
+
     // --- WHITE: NOT available at AZ or WI ---
     "1/4-WHITE": { rlx: true, arc_az: false, arc_wi: false },
     "8mm-WHITE": { rlx: true, arc_az: false, arc_wi: false },
@@ -2249,7 +2258,7 @@ const PRODUCT_AVAILABILITY_MATRIX: Record<
 
     // --- GREEN (Forest Green / Green): RLX exclusive ---
     "1/4-GREEN": { rlx: true, arc_az: false, arc_wi: false },
-    "8mm-GREEN": { rlx: true, arc_az: false, arc_wi: true }, // WI: green 8mm only
+    "8mm-GREEN": { rlx: true, arc_az: true, arc_wi: true }, // AZ,WI: green 8mm only
     "3/8-GREEN": { rlx: true, arc_az: false, arc_wi: false },
     "1/2-GREEN": { rlx: true, arc_az: false, arc_wi: false },
     "3/4-GREEN": { rlx: true, arc_az: false, arc_wi: false },
@@ -2460,6 +2469,9 @@ const PRODUCT_AVAILABILITY_MATRIX: Record<
     "1/4-4x3-SILVER": { rlx: false, arc_az: true, arc_wi: true },
     "1/4-4x6-SILVER": { rlx: false, arc_az: true, arc_wi: true },
     "1/4-4x8-SILVER": { rlx: false, arc_az: true, arc_wi: true },
+    "1/4-4x3-BLUE_SILVER": { rlx: false, arc_az: true, arc_wi: true },
+    "1/4-4x6-BLUE_SILVER": { rlx: false, arc_az: true, arc_wi: true },
+    "1/4-4x8-BLUE_SILVER": { rlx: false, arc_az: true, arc_wi: true },
     "1/4-4x3-WHITE": { rlx: true, arc_az: false, arc_wi: false },
     "1/4-4x6-WHITE": { rlx: true, arc_az: false, arc_wi: false },
     "1/4-4x8-WHITE": { rlx: true, arc_az: false, arc_wi: false },
@@ -2516,6 +2528,9 @@ const PRODUCT_AVAILABILITY_MATRIX: Record<
     "3/8-4x3-SILVER": { rlx: false, arc_az: true, arc_wi: true },
     "3/8-4x6-SILVER": { rlx: false, arc_az: true, arc_wi: true },
     "3/8-4x8-SILVER": { rlx: false, arc_az: true, arc_wi: true },
+    "3/8-4x3-BLUE_SILVER": { rlx: false, arc_az: true, arc_wi: true },
+    "3/8-4x6-BLUE_SILVER": { rlx: false, arc_az: true, arc_wi: true },
+    "3/8-4x8-BLUE_SILVER": { rlx: false, arc_az: true, arc_wi: true },
     "3/8-4x3-WHITE": { rlx: true, arc_az: false, arc_wi: false },
     "3/8-4x6-WHITE": { rlx: true, arc_az: false, arc_wi: false },
     "3/8-4x8-WHITE": { rlx: true, arc_az: false, arc_wi: false },
@@ -2572,6 +2587,9 @@ const PRODUCT_AVAILABILITY_MATRIX: Record<
     "8mm-4x3-SILVER": { rlx: false, arc_az: true, arc_wi: true },
     "8mm-4x6-SILVER": { rlx: false, arc_az: true, arc_wi: true },
     "8mm-4x8-SILVER": { rlx: false, arc_az: true, arc_wi: true },
+    "8mm-4x3-BLUE_SILVER": { rlx: false, arc_az: true, arc_wi: true },
+    "8mm-4x6-BLUE_SILVER": { rlx: false, arc_az: true, arc_wi: true },
+    "8mm-4x8-BLUE_SILVER": { rlx: false, arc_az: true, arc_wi: true },
     "8mm-4x3-WHITE": { rlx: true, arc_az: false, arc_wi: false },
     "8mm-4x6-WHITE": { rlx: true, arc_az: false, arc_wi: false },
     "8mm-4x8-WHITE": { rlx: true, arc_az: false, arc_wi: false },
@@ -2628,6 +2646,9 @@ const PRODUCT_AVAILABILITY_MATRIX: Record<
     "1/2-4x3-SILVER": { rlx: false, arc_az: true, arc_wi: true },
     "1/2-4x6-SILVER": { rlx: false, arc_az: true, arc_wi: true },
     "1/2-4x8-SILVER": { rlx: false, arc_az: true, arc_wi: true },
+    "1/2-4x3-BLUE_SILVER": { rlx: false, arc_az: true, arc_wi: true },
+    "1/2-4x6-BLUE_SILVER": { rlx: false, arc_az: true, arc_wi: true },
+    "1/2-4x8-BLUE_SILVER": { rlx: false, arc_az: true, arc_wi: true },
     "1/2-4x3-WHITE": { rlx: true, arc_az: false, arc_wi: false },
     "1/2-4x6-WHITE": { rlx: true, arc_az: false, arc_wi: false },
     "1/2-4x8-WHITE": { rlx: true, arc_az: false, arc_wi: false },
@@ -2684,6 +2705,9 @@ const PRODUCT_AVAILABILITY_MATRIX: Record<
     "3/4-4x3-SILVER": { rlx: true, arc_az: false, arc_wi: false },
     "3/4-4x6-SILVER": { rlx: true, arc_az: false, arc_wi: false },
     "3/4-4x8-SILVER": { rlx: true, arc_az: false, arc_wi: false },
+    "3/4-4x3-BLUE_SILVER": { rlx: true, arc_az: false, arc_wi: false },
+    "3/4-4x6-BLUE_SILVER": { rlx: true, arc_az: false, arc_wi: false },
+    "3/4-4x8-BLUE_SILVER": { rlx: true, arc_az: false, arc_wi: false },
     "3/4-4x3-WHITE": { rlx: true, arc_az: false, arc_wi: false },
     "3/4-4x6-WHITE": { rlx: true, arc_az: false, arc_wi: false },
     "3/4-4x8-WHITE": { rlx: true, arc_az: false, arc_wi: false },
@@ -2864,15 +2888,9 @@ function detectColorType(title: string): string {
   if (t.includes("forest green")) return "FOREST_GREEN";
   if (t.includes("bright red")) return "BRIGHT_RED";
   if (t.includes("brick red")) return "BRICK_RED";
-  if (
-    t.includes("blue/silver") ||
-    t.includes("blue silver") ||
-    t.includes("blue gray") ||
-    t.includes("blue grey")
-  )
-    return "BLUE_GRAY";
-  if (t.includes("blugray") || t.includes("blu gray") || t.includes("blu grey"))
-    return "BLUGRAY";
+  if (t.includes('blue gray') || t.includes('blue grey')) return 'BLUE_GRAY'
+  if (t.includes('blugray') || t.includes('blu gray') || t.includes('blu grey')) return 'BLUGRAY'
+  if (t.includes('blue/silver') || t.includes('blue silver') || t.includes('bluesilver')) return 'BLUE_SILVER'
 
   // Single-word colors
   if (t.includes("confetti")) return "CONFETTI";
@@ -4178,13 +4196,12 @@ export async function POST(request: NextRequest) {
       );
     } else {
       // ✅ CALL FEDEX FREIGHT LTL
-      console.log("🟠 Calling FedEx Freight LTL API");
-
-      const fedexLTLCalls = Array.from(itemsByOrigin.entries()).map(
-        ([originKey, group]) =>
-          getFedExLTLRateFast(originKey, group, destination),
-      );
-      ratePromises.push(...fedexLTLCalls);
+      // console.log("🟠 Calling FedEx Freight LTL API");
+      // const fedexLTLCalls = Array.from(itemsByOrigin.entries()).map(
+      //   ([originKey, group]) =>
+      //     getFedExLTLRateFast(originKey, group, destination),
+      // );
+      // ratePromises.push(...fedexLTLCalls);
     }
 
     // 2. WWEX calls in parallel
@@ -4318,15 +4335,15 @@ export async function POST(request: NextRequest) {
     }
 
     //FedEx Freight LTL (if not eligible for small parcel and called)
-    if (!shouldCallFedEx && fedexLTLRates.length > 0) {
-      const totalFedExLTL = fedexLTLRates.reduce((sum, r) => sum + r.rate, 0);
+    // if (!shouldCallFedEx && fedexLTLRates.length > 0) {
+    //   const totalFedExLTL = fedexLTLRates.reduce((sum, r) => sum + r.rate, 0);
 
-      freightRates.push({
-        service_name: "LTL Freight Shipping",
-        service_code: "FEDEX_FREIGHT_LTL",
-        total_price:totalFedExLTL,
-      });
-    }
+    //   freightRates.push({
+    //     service_name: "LTL Freight Shipping",
+    //     service_code: "FEDEX_FREIGHT_LTL",
+    //     total_price:totalFedExLTL,
+    //   });
+    // }
 
     // Pick the lowest freight rate
     if (freightRates.length > 0) {
@@ -4390,15 +4407,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!shouldCallFedEx && fedexLTLRates.length > 0) {
-      const rawFedExLTL = fedexLTLRates.reduce(
-        (sum, r) => sum + r.rate / 1.15,
-        0,
-      );
-      rateBreakdownLines.push(
-        `FEDEX Freight LTL - $${rawFedExLTL.toFixed(2)} + 15% = $${(rawFedExLTL * 1.15).toFixed(2)}`,
-      );
-    }
+    // if (!shouldCallFedEx && fedexLTLRates.length > 0) {
+    //   const rawFedExLTL = fedexLTLRates.reduce(
+    //     (sum, r) => sum + r.rate / 1.15,
+    //     0,
+    //   );
+    //   rateBreakdownLines.push(
+    //     `FEDEX Freight LTL - $${rawFedExLTL.toFixed(2)} + 15% = $${(rawFedExLTL * 1.15).toFixed(2)}`,
+    //   );
+    // }
 
     // Attach to each rate as metadata (Shopify passes this back on order)
     const rateBreakdownText = rateBreakdownLines.join("\n");
